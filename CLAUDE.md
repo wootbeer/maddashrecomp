@@ -56,9 +56,10 @@ comment just above the function.
 
 ## Porting from Orta Recomp
 
-`src/hle/` (`d3d_hle.c`, `dsound_hle.c`, `input_hle.c`, `d3d_calltrace.c`,
-`wait_trace.c`) came from Orta and is **still written for Orta's addresses
-(XDK 4928)**. Mad Dash is XDK 3936 (D3D8 3925, DSOUND 3936, XAPI 3911):
+`src/hle/d3d_hle.c` is Mad Dash's (re-addressed, growing). The rest of
+Orta's hooks wait in `src/hle/orta/` (`d3d_hle.c`, `dsound_hle.c`,
+`input_hle.c`, `wait_trace.c`), **still at Orta's addresses (XDK 4928)**,
+not built and not scanned for overrides. Mad Dash is XDK 3936 (D3D8 3925, DSOUND 3936, XAPI 3911):
 every `sub_XXXXXXXX`, `_gen`, `_enter` and every data address there
 (`D3D__RenderState`, `D3D__pDevice`, back-buffer surfaces, texture slots,
 `RS_ENCODE`, `PROG_VA(...)`) must be re-found in Mad Dash and the
@@ -67,8 +68,9 @@ another XDK's table. Before replacing a function, check its `ret N` and
 argument use in Mad Dash's own code. Sources of names, all read locally:
 Cxbx-Reloaded's XbSymbolDatabase CLI run on the player's own XBE (XDK
 symbols), `tools/xbe_match.py` against Orta's or JSRF's XBE, disassembly.
-See `docs/STATE.md` for how the not-yet-re-addressed files are kept out
-of the build.
+Mad Dash's symbol list is `build/xdk_symbols.txt` (the owner's
+XbSymbolDatabase output; never committed). Mad Dash's renderer writes some
+NV2A methods into the push buffer itself (`docs/maddash-facts.md`).
 
 Mad Dash uses **Bink** for movies (BINK* sections), not CRI/Sofdec: Orta's
 `cri_hle.c` and `aix.c` were not carried over.

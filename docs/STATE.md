@@ -4,8 +4,9 @@ v0.0.1, bring-up. The repository was set up from Orta Recomp (v0.1.15):
 launcher, game-file picker (ISO or folder), F1 menu, settings, renderer,
 mixer, crash reports, Android project and the 43 xboxrecomp patches, renamed
 for Mad Dash (`MadDashRecomp`, `maddashrecomp.ini`, `MDR_*`, `mdr_*`). The
-game recompiles, builds and boots into the real XDK Direct3D setup, where it
-waits on the GPU (no hooks yet). Facts about the game and the first boot:
+game recompiles, builds, opens its window and presents its first frames;
+without the disc's data it then exits to the dashboard. Facts about the
+game and the boots so far:
 `docs/maddash-facts.md`.
 
 ## How it fits together
@@ -20,36 +21,51 @@ waits on the GPU (no hooks yet). Facts about the game and the first boot:
   program; `maddash_names.h`), ICALL/UNIMPL diagnostics
   (`guest_manual.c`, Orta's game hooks removed), crash reports, vertex
   programs on the CPU (`vsh.c`), a placeholder `widescreen.c`.
-- `src/hle/orta/`: Orta's Direct3D, DirectSound, input and wait hooks, at
-  **Orta's addresses**: not built, not scanned. `docs/hle-port.md` lists
-  them and how to re-address them. Until then the game would run the real
-  XDK code, which talks to the NV2A/APU hardware.
+- `src/hle/d3d_hle.c`: Mad Dash's Direct3D hooks, re-addressed from
+  XbSymbolDatabase names and checked in its code: frame clock
+  (BlockUntilVerticalBlank, vblank callback), CreateDevice (our window),
+  Clear, Present (3925's end of frame; no Swap), KickOff, BlockOnTime.
+- `src/hle/orta/`: the rest of Orta's hooks (Direct3D draws and state,
+  DirectSound, input, waits), at **Orta's addresses**: not built, not
+  scanned. `docs/hle-port.md` lists them.
 - Not carried over: Orta's pd1 (second program), CRI/Sofdec and AIX (Mad
   Dash uses Bink), Orta's game hooks (widescreen, unlocks, difficulty, intro
-  skip, launch guard, video hooks), `CHANGELOG.md`.
+  skip, launch guard), `CHANGELOG.md`.
 
 ## Next
 
-1. XDK symbols for Mad Dash (XbSymbolDatabase CLI on the owner's XBE;
-   could not be run in the cloud session), then re-address
-   `src/hle/orta/` file by file (`docs/hle-port.md`), D3D first.
-2. Boot with the whole disc (`media/`), keep collecting `[ICALL] Failed`
+1. The game's data: a boot needs the disc's `media/` folder (cloud runs
+   need it uploaded, or testing moves to Windows).
+2. Draws. Mad Dash's display-list player writes NV2A methods itself
+   (vertex arrays, texture stages: `docs/maddash-facts.md`), so Orta's
+   API-level capture alone sees no vertex streams. Plan: at each D3D draw
+   hook, read the methods the game wrote since the last D3D call (from
+   the last hook's cursor to the device's cursor, 0x00248E90) for those
+   few methods only, into the draw state; then port Orta's draw path
+   (SetTexture, SetVertexShaderConstant, CreateVertexShader,
+   SetPixelShader, Draw(Indexed)Vertices, Begin/End, render states from
+   0x0024BE88). A narrow reader of the game's own writes, not an NV2A
+   emulator.
+3. DirectSound (DSOUND 3936, names in `build/xdk_symbols.txt`) and input
+   (XInputGetState 0x0028F244 and friends), from `src/hle/orta/`.
+4. Boot with the whole disc (`media/`), keep collecting `[ICALL] Failed`
    lines into `tools/mdr_seeds.json` (`"observed": true`). The 64 MB heap
    request at boot (docs/maddash-facts.md).
-3. Bink: decide between hooking Bink's own API (BinkOpen/BinkDoFrame/
+5. Bink: decide between hooking Bink's own API (BinkOpen/BinkDoFrame/
    BinkCopyToBuffer) and letting the recompiled decoder run, with its
    output surfaces drawn by our D3D.
-4. Mad Dash's data files: what the disc holds (for the folder check in
+6. Mad Dash's data files: what the disc holds (for the folder check in
    `src/assets.c`), save format, its own widescreen if any.
-5. The launcher-only build (no `gen/`) does not link: `overlay.c` is
+7. The launcher-only build (no `gen/`) does not link: `overlay.c` is
    built only with the game code (also so in Orta Recomp).
-6. Rename leftovers: comments that tell Orta's history were kept where they
+8. Rename leftovers: comments that tell Orta's history were kept where they
    explain why code is as it is; `tools/xbe_match.py` still describes Orta
    vs JSRF; the Android project (`android/`) is renamed but untested.
 
 ## Testing
 
-- Cloud: `MDR_NO_DRAW=1 MDR_FAST=4`, `MDR_SCREENSHOT=dir`,
+- Cloud: lavapipe (`apt-get install mesa-vulkan-drivers`),
+  `SDL_VIDEO_DRIVER=offscreen SDL_AUDIO_DRIVER=dummy`; `MDR_FAST=4`, `MDR_SCREENSHOT=dir`,
   `MDR_CAPTURE=frame`, `MDR_INPUT_SCRIPT` (from Orta; they need the D3D
   and input hooks).
 - Windows: build from a Developer PowerShell; `--log run.log`, not

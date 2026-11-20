@@ -5,6 +5,14 @@ hooks as Orta had them: Orta's addresses, XDK 4928. They are not compiled
 and not scanned for overrides (`tools/recomp.py` skips the folder). Each
 file goes back to `src/hle/` once every address in it is Mad Dash's.
 
+## Done
+
+`src/hle/d3d_hle.c`: BlockUntilVerticalBlank 0x0023B240, Direct3D_CreateDevice
+0x0023BFB0, Clear 0x002418B0, Present 0x002473A0 (in place of 4928's Swap),
+CDevice::KickOff 0x002405D0, D3D_BlockOnTime 0x00240720. The draw path is
+the next part, with a reader for the NV2A methods the game writes itself
+(`docs/STATE.md`).
+
 ## Steps
 
 1. Get Mad Dash's XDK symbols: build Cxbx-Reloaded's XbSymbolDatabase from a
