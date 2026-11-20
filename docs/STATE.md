@@ -4,9 +4,10 @@ v0.0.1, bring-up. The repository was set up from Orta Recomp (v0.1.15):
 launcher, game-file picker (ISO or folder), F1 menu, settings, renderer,
 mixer, crash reports, Android project and the 43 xboxrecomp patches, renamed
 for Mad Dash (`MadDashRecomp`, `maddashrecomp.ini`, `MDR_*`, `mdr_*`). The
-game recompiles, builds, opens its window, loads its front-end world and
-reaches the boot logos (no picture yet: no draw hooks), then hangs in the
-real DirectSound. Facts about the game and the boots so far:
+game recompiles, builds, opens its window, loads its front-end world, plays
+the logo movies with sound and runs its title at 59.94 fps (no picture
+yet: no draw hooks); left idle it relaunches itself into the attract demo
+(`relaunch.c`). Facts about the game and the boots so far:
 `docs/maddash-facts.md`.
 
 ## How it fits together
@@ -25,6 +26,8 @@ real DirectSound. Facts about the game and the boots so far:
   XbSymbolDatabase names and checked in its code: frame clock
   (BlockUntilVerticalBlank, vblank callback), CreateDevice (our window),
   Clear, Present (3925's end of frame; no Swap), KickOff, BlockOnTime.
+- `src/hle/dsound_hle.c`: DirectSound on our mixer, re-addressed from
+  Orta's for DSOUND 3936 (mix-bin masks, light HRTF).
 - `src/guest/stream_wait.c`: the file stream's consumer yields the guest
   CPU when its poll makes no progress (the console's preemption).
 - xboxrecomp patches 0044 (IO status block order) and 0045 (the title's
@@ -32,7 +35,7 @@ real DirectSound. Facts about the game and the boots so far:
   this game (`docs/maddash-facts.md`). Worth sending upstream, and to
   Orta Recomp, whose main thread also ran unlocked.
 - `src/hle/orta/`: the rest of Orta's hooks (Direct3D draws and state,
-  DirectSound, input, waits), at **Orta's addresses**: not built, not
+  input, waits; its DirectSound is ported), at **Orta's addresses**: not built, not
   scanned. `docs/hle-port.md` lists them.
 - Not carried over: Orta's pd1 (second program), CRI/Sofdec and AIX (Mad
   Dash uses Bink), Orta's game hooks (widescreen, unlocks, difficulty, intro
@@ -40,10 +43,8 @@ real DirectSound. Facts about the game and the boots so far:
 
 ## Next
 
-1. DirectSound (the current hang): port `src/hle/orta/dsound_hle.c` to
-   DSOUND 3936 (names in `build/xdk_symbols.txt`: DirectSoundCreate
-   0x00284671, CreateSoundBuffer/Stream, the IDirectSoundBuffer methods;
-   3936's objects are not 4928's: check each method's `ret N` and layout).
+1. Bink's CPU check: cpuid and pushfd/popfd in the lifter (a patch), so
+   Bink picks its decoder routines (0x0031541C is left null now).
 2. Draws. Mad Dash's display-list player writes NV2A methods itself
    (vertex arrays, texture stages: `docs/maddash-facts.md`), so Orta's
    API-level capture alone sees no vertex streams. Plan: at each D3D draw

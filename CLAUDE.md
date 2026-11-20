@@ -56,9 +56,9 @@ comment just above the function.
 
 ## Porting from Orta Recomp
 
-`src/hle/d3d_hle.c` is Mad Dash's (re-addressed, growing). The rest of
-Orta's hooks wait in `src/hle/orta/` (`d3d_hle.c`, `dsound_hle.c`,
-`input_hle.c`, `wait_trace.c`), **still at Orta's addresses (XDK 4928)**,
+`src/hle/d3d_hle.c` (growing) and `src/hle/dsound_hle.c` are Mad Dash's,
+re-addressed. The rest of Orta's hooks wait in `src/hle/orta/` (`d3d_hle.c`,
+`input_hle.c`, `wait_trace.c`; its `dsound_hle.c` for reference), **still at Orta's addresses (XDK 4928)**,
 not built and not scanned for overrides. Mad Dash is XDK 3936 (D3D8 3925, DSOUND 3936, XAPI 3911):
 every `sub_XXXXXXXX`, `_gen`, `_enter` and every data address there
 (`D3D__RenderState`, `D3D__pDevice`, back-buffer surfaces, texture slots,

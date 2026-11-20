@@ -13,6 +13,9 @@ CDevice::KickOff 0x002405D0, D3D_BlockOnTime 0x00240720. The draw path is
 the next part, with a reader for the NV2A methods the game writes itself
 (`docs/STATE.md`).
 
+`src/hle/dsound_hle.c`: all of Orta's DirectSound the game and Bink call
+(36 entry points; `docs/maddash-facts.md`).
+
 ## Steps
 
 1. Get Mad Dash's XDK symbols: build Cxbx-Reloaded's XbSymbolDatabase from a

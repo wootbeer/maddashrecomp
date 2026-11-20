@@ -127,3 +127,35 @@ default.xbe's (the only one recognised).
   a junk pointer for ever (from 0x00284F2F, its voice list at +0x118 never
   set up): the real DSOUND without the APU. DirectSound is the next hook
   set.
+
+## DirectSound (DSOUND 3936)
+
+- `src/hle/dsound_hle.c`: Orta's, 36 entry points re-addressed (every
+  `ret N` the same as 4928's). 3936's differences: mix bins are masks (bit
+  n = mix bin n) in DSBUFFERDESC (+16, `dwMixBinMask`), DSSTREAMDESC (+20)
+  and SetMixBins; a 3D voice always gets 0x7C0, mask 0 a default by channel
+  count (table 0x0028BF68: mono 0x3F, stereo 0x3). The light HRTF
+  (`DirectSoundUseLightHRTF`; pairs at 0x0028C118, azimuth only). The
+  stream vtable is 0x002BE5A8.
+- The game: one ADPCM buffer per sound (DSBUFFERDESC built at 0x00153B87),
+  music streams (DirectSoundCreateStream at 0x001512BC, 3 packets), the DSP
+  image `soundBins\dsstdfx.bin`, two I3DL2 listener presets.
+- Bink's audio (0x00259CD0-0x0025A680) makes a 0-byte buffer, gives it its
+  own memory with SetBufferData and fills it with Lock/Unlock.
+
+## Self-relaunch to load a level
+
+- Mad Dash loads a level by relaunching its own default.xbe
+  (XLaunchNewImage, launch data "lev..lod" with the level path, e.g.
+  `ruins/ruins`), as HalReturnToFirmware(2). `src/guest/relaunch.c` (from
+  Orta) restarts MadDashRecomp on it with `--launch-data`; the attract
+  demo (after the title sits idle) goes this way to `levels\ruins\`.
+
+## Bink
+
+- Movies play (Eidos and Crystal Dynamics logos, ~30 fps), but Bink's CPU
+  check (pushfd/popfd/cpuid at 0x0025AC75; the lifter leaves them as
+  no-ops) leaves a function pointer at 0x0031541C null, and the decoder
+  calls it a million times (from 0x0025013A, 0x002502C8): the pictures are
+  likely not decoded. Wanted: cpuid answering as the Xbox's Pentium III,
+  and pushfd/popfd, in the lifter.
