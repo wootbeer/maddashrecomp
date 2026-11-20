@@ -86,12 +86,14 @@ static int trace_on(void)
     static int on = -1;
     if (on < 0) {
         const char *v = getenv("MDR_DSOUND_TRACE");
-        on = v && *v && *v != '0';
+        on = v && *v && *v != '0' ? SDL_atoi(v) > 1 ? 2 : 1 : 0;
     }
     return on;
 }
 
 #define TRACE(...) do { if (trace_on()) SDL_Log("dsound: " __VA_ARGS__); } while (0)
+/* Polls (GetStatus, GetCurrentPosition), millions a minute: MDR_DSOUND_TRACE=2. */
+#define TRACE_POLL(...) do { if (trace_on() > 1) SDL_Log("dsound: " __VA_ARGS__); } while (0)
 
 static void note_once(const char *what)
 {
@@ -630,7 +632,7 @@ void sub_00283937(void)
     bool looping = false, playing = id && mdr_voice_playing(id, &looping);
     if (ARG(1))
         MEM32(ARG(1)) = (playing ? 1u : 0u) | (playing && looping ? 4u : 0u);
-    TRACE("GetStatus 0x%08x -> %s", ARG(0), playing ? "playing" : "stopped");
+    TRACE_POLL("GetStatus 0x%08x -> %s", ARG(0), playing ? "playing" : "stopped");
     RETURN(8, id ? DS_OK : DSERR_INVALIDCALL);
 }
 
@@ -639,7 +641,7 @@ void sub_00283953(void)
 {
     int id = voice_of(ARG(0));
     uint32_t pos = id ? mdr_voice_position(id) : 0;
-    TRACE("GetCurrentPosition 0x%08x -> %u", ARG(0), pos);
+    TRACE_POLL("GetCurrentPosition 0x%08x -> %u", ARG(0), pos);
     if (ARG(1)) MEM32(ARG(1)) = pos;
     if (ARG(2)) MEM32(ARG(2)) = pos;
     RETURN(12, id ? DS_OK : DSERR_INVALIDCALL);
@@ -860,9 +862,8 @@ void sub_0028470F(void)
                 SDL_Log("dsound: stream format 0x%04x, treating as PCM", tag);
         }
     }
-    vd.bin_count = bins_from_mask(mixbins, (MEM32(desc) & 0x10) != 0, vd.channels, vd.bins);
-    if (MEM32(desc) & 0x10)
-        note_once("3D streams");
+    vd.positional = (MEM32(desc) & 0x10) != 0;          /* DSSTREAMCAPS_CTRL3D */
+    vd.bin_count = bins_from_mask(mixbins, vd.positional, vd.channels, vd.bins);
 
     memset(s, 0, sizeof *s);
     s->voice = mdr_voice_create(&vd);
@@ -882,6 +883,12 @@ void sub_0028470F(void)
     MEM32(obj + STR_REFS) = 1;
     MEM32(obj + STR_INDEX) = (uint32_t)(s - streams);
     mdr_voice_set_packet_done(s->voice, packet_done, s);
+    if (s->voice < MAX_3D) {
+        /* A 3D stream is placed like a 3D buffer (src3d by voice id). */
+        memset(&src3d[s->voice], 0, sizeof src3d[s->voice]);
+        src3d[s->voice].used = vd.positional;
+        apply_3d(s->voice);
+    }
     mdr_voice_play(s->voice, false);    /* plays packets as they arrive */
     if (s->callback)
         note_once("stream packet callbacks");
@@ -909,6 +916,8 @@ void sub_00283F62(void)
         refs = (MEM32(o + STR_REFS) -= 1);
         if (!refs) {
             mdr_voice_flush(s->voice);
+            if (s->voice < MAX_3D)
+                src3d[s->voice].used = false;
             mdr_voice_destroy(s->voice);
             MEM32(o + STR_TAG) = 0;
             s->obj = 0;
@@ -1014,9 +1023,21 @@ void sub_002839DF(void)
     RETURN(8, DS_OK);
 }
 
-/* IDirectSoundStream_SetPosition(pStream, x, y, z, apply): `ret 0x14`;
- * 3D streams are recorded only for now. */
-void sub_002839F3(void) { note_once("3D streams (SetPosition)"); RETURN(20, DS_OK); }
+/* IDirectSoundStream_SetPosition(pStream, x, y, z, apply): `ret 0x14`.
+ * Mad Dash's ambient sounds (the menus' water among them) and many of its
+ * effects are mono 3D streams: unplaced, they all played at full level. */
+void sub_002839F3(void)
+{
+    int id = stream_voice(ARG(0));
+    if (id > 0 && id < MAX_3D && src3d[id].used) {
+        for (int k = 0; k < 3; k++)
+            src3d[id].pos[k] = fval(ARG(1 + k));
+        TRACE("3D stream 0x%08x SetPosition %g %g %g apply %u", ARG(0), src3d[id].pos[0], src3d[id].pos[1],
+              src3d[id].pos[2], ARG(4));
+        apply_3d(id);
+    }
+    RETURN(20, DS_OK);
+}
 /* IDirectSoundStream_SetI3DL2Source(pStream, pds3db, dwApply): a jump to
  * CDirectSoundStream_SetI3DL2Source (0x00283813, `ret 0xc`). */
 void sub_00283A1C(void)

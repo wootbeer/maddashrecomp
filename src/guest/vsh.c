@@ -441,7 +441,7 @@ static void run_ref(const mdr_vsh_program *p, const float in[MDR_VSH_INPUTS][4],
                     op->o_mask);
         /* Writes, after both units have computed. */
         if (mac == MAC_ARL) {
-            m.a0 = (int)floorf(a[0]);
+            m.a0 = (int)floorf(a[0] + MDR_VSH_ARL_BIAS);
         } else if (mac != MAC_NOP && op->mac_mask) {
             float *dst = op->out_r == 12 ? out[VSH_OPOS] : (op->out_r < 12 ? m.r[op->out_r] : NULL);
             if (dst) write_masked(dst, mr, op->mac_mask);
@@ -581,7 +581,7 @@ static void run_fast(const mdr_vsh_program *p, const float in[MDR_VSH_INPUTS][4]
         case MAC_MAX: mr = _mm_max_ps(a, b); break;
         case MAC_SLT: mr = _mm_and_ps(_mm_cmplt_ps(a, b), ones); break;
         case MAC_SGE: mr = _mm_and_ps(_mm_cmpge_ps(a, b), ones); break;
-        case MAC_ARL: a0 = (int)floorf(_mm_cvtss_f32(a)); break;
+        case MAC_ARL: a0 = (int)floorf(_mm_cvtss_f32(a) + MDR_VSH_ARL_BIAS); break;
         default: break;
         }
 
@@ -747,7 +747,7 @@ static void run_fast4(const mdr_vsh_program *p, const float in[4][MDR_VSH_INPUTS
             float x[4];
             _mm_storeu_ps(x, A[0]);
             for (int l = 0; l < 4; l++)
-                a0[l] = (int)floorf(x[l]);
+                a0[l] = (int)floorf(x[l] + MDR_VSH_ARL_BIAS);
             break;
         }
         default: break;

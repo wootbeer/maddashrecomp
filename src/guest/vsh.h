@@ -16,6 +16,15 @@
 
 #define MDR_VSH_MAX_INSNS  136
 #define MDR_VSH_CONSTANTS  192
+
+/* ARL takes a0 from a float that is meant to be a whole number: Mad Dash's
+ * skinning program (two bones a vertex) makes each bone's constant index as
+ * index * scale, which comes out a hair under the whole number for some
+ * bones; floored, a0 named the matrix below and those vertices were pulled
+ * off the body ("tethers"). A small bias rounds such a value up and leaves a
+ * real fraction floored. The GLSL copies (vsh.vert, vsh_spec.c) use the
+ * same value. */
+#define MDR_VSH_ARL_BIAS   (1.0f / 64.0f)
 #define MDR_VSH_INPUTS     16
 
 /* One vertex input as the declaration describes it. */

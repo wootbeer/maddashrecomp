@@ -272,7 +272,7 @@ void run(int base, int count)
         else if (mac == 10u) M = mix(B, A, greaterThan(A, B));         // MAX
         else if (mac == 11u) M = vec4(lessThan(A, B));                 // SLT
         else if (mac == 12u) M = vec4(greaterThanEqual(A, B));         // SGE
-        else if (mac == 13u) a0 = int(floor(A.x));                     // ARL
+        else if (mac == 13u) a0 = int(floor(A.x + 0.015625));          // ARL (MDR_VSH_ARL_BIAS, src/guest/vsh.h)
 
         if (ilu == 1u) I = C;                                          // MOV
         else if (ilu == 2u) I = vec4(C.x == 1.0 ? 1.0 : 1.0 / C.x);    // RCP

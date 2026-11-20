@@ -183,7 +183,7 @@ static char *gen(const uint32_t *code, uint32_t count, bool compute)
         case 10: put(&b, "        M = mix(B, A, greaterThan(A, B));\n"); break;
         case 11: put(&b, "        M = vec4(lessThan(A, B));\n"); break;
         case 12: put(&b, "        M = vec4(greaterThanEqual(A, B));\n"); break;
-        case 13: put(&b, "        a0 = int(floor(A.x));\n"); break;
+        case 13: put(&b, "        a0 = int(floor(A.x + 0.015625));\n");   /* MDR_VSH_ARL_BIAS */ break;
         default: break;
         }
         switch (ilu) {
