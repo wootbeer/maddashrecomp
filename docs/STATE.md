@@ -4,9 +4,9 @@ v0.0.1, bring-up. The repository was set up from Orta Recomp (v0.1.15):
 launcher, game-file picker (ISO or folder), F1 menu, settings, renderer,
 mixer, crash reports, Android project and the 43 xboxrecomp patches, renamed
 for Mad Dash (`MadDashRecomp`, `maddashrecomp.ini`, `MDR_*`, `mdr_*`). The
-game recompiles, builds, opens its window and presents its first frames;
-without the disc's data it then exits to the dashboard. Facts about the
-game and the boots so far:
+game recompiles, builds, opens its window, loads its front-end world and
+reaches the boot logos (no picture yet: no draw hooks), then hangs in the
+real DirectSound. Facts about the game and the boots so far:
 `docs/maddash-facts.md`.
 
 ## How it fits together
@@ -25,6 +25,12 @@ game and the boots so far:
   XbSymbolDatabase names and checked in its code: frame clock
   (BlockUntilVerticalBlank, vblank callback), CreateDevice (our window),
   Clear, Present (3925's end of frame; no Swap), KickOff, BlockOnTime.
+- `src/guest/stream_wait.c`: the file stream's consumer yields the guest
+  CPU when its poll makes no progress (the console's preemption).
+- xboxrecomp patches 0044 (IO status block order) and 0045 (the title's
+  main thread holds the guest CPU lock): the stream reader races, found in
+  this game (`docs/maddash-facts.md`). Worth sending upstream, and to
+  Orta Recomp, whose main thread also ran unlocked.
 - `src/hle/orta/`: the rest of Orta's hooks (Direct3D draws and state,
   DirectSound, input, waits), at **Orta's addresses**: not built, not
   scanned. `docs/hle-port.md` lists them.
@@ -34,8 +40,10 @@ game and the boots so far:
 
 ## Next
 
-1. The game's data: a boot needs the disc's `media/` folder (cloud runs
-   need it uploaded, or testing moves to Windows).
+1. DirectSound (the current hang): port `src/hle/orta/dsound_hle.c` to
+   DSOUND 3936 (names in `build/xdk_symbols.txt`: DirectSoundCreate
+   0x00284671, CreateSoundBuffer/Stream, the IDirectSoundBuffer methods;
+   3936's objects are not 4928's: check each method's `ret N` and layout).
 2. Draws. Mad Dash's display-list player writes NV2A methods itself
    (vertex arrays, texture stages: `docs/maddash-facts.md`), so Orta's
    API-level capture alone sees no vertex streams. Plan: at each D3D draw
@@ -46,9 +54,10 @@ game and the boots so far:
    SetPixelShader, Draw(Indexed)Vertices, Begin/End, render states from
    0x0024BE88). A narrow reader of the game's own writes, not an NV2A
    emulator.
-3. DirectSound (DSOUND 3936, names in `build/xdk_symbols.txt`) and input
-   (XInputGetState 0x0028F244 and friends), from `src/hle/orta/`.
-4. Boot with the whole disc (`media/`), keep collecting `[ICALL] Failed`
+3. Input (XInputGetState 0x0028F244 and friends), from `src/hle/orta/`.
+4. Boot further (the cloud has a front-end subset of `media/`, uploaded by
+   the owner; music `.str` files are not on the owner's listing), keep
+   collecting `[ICALL] Failed`
    lines into `tools/mdr_seeds.json` (`"observed": true`). The 64 MB heap
    request at boot (docs/maddash-facts.md).
 5. Bink: decide between hooking Bink's own API (BinkOpen/BinkDoFrame/
@@ -64,7 +73,8 @@ game and the boots so far:
 
 ## Testing
 
-- Cloud: lavapipe (`apt-get install mesa-vulkan-drivers`),
+- Cloud: gdb (`thread apply all bt`) on a stuck run names the game
+  functions; lavapipe (`apt-get install mesa-vulkan-drivers`),
   `SDL_VIDEO_DRIVER=offscreen SDL_AUDIO_DRIVER=dummy`; `MDR_FAST=4`, `MDR_SCREENSHOT=dir`,
   `MDR_CAPTURE=frame`, `MDR_INPUT_SCRIPT` (from Orta; they need the D3D
   and input hooks).

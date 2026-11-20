@@ -93,3 +93,37 @@ default.xbe's (the only one recognised).
   tables under `objects\player\`, `levels\ui\`, `objects\glueworld\dialogs\`,
   looks for saves `TDATA\45530001\GOP4.dat`, `GRK3.dat`, and without the
   data returns to the dashboard (HalReturnToFirmware 2).
+
+## Streaming and threads
+
+- Files load through a stream reader (vtable 0x002B6980): a 256 KB ring
+  of 8 overlapped 32 KB reads (state at +4: 2 reading, 3 done, 5 at end,
+  6 failed; reads queued +0xC4, collected +0xC8, filled to +0x10). A worker
+  thread (0x00180D10, object 0x0033A368) takes requests from a semaphore
+  (`CreateSemaphore(0, 0x7FFFFFFF)`) and reads them at time-critical
+  priority; the consumer (0x00180800) spins on the reader's slot 3
+  (0x001814F0) until the filled position moves, with no kernel call while
+  reads are in flight. Completion is judged from the OVERLAPPED alone
+  (0x00180C00: queued mark at +0x10, then Status != STATUS_PENDING).
+- Two kernel-layer faults broke it, fixed in xboxrecomp patches:
+  0044 (the IO status block's Information written before its Status) and
+  0045 (the title's main thread, run inline by the first
+  PsCreateSystemThreadEx, now holds the guest CPU lock; before, it ran
+  beside every other guest thread, and the reader's worker and consumer
+  raced on the OVERLAPPED). With the lock real, the consumer's spin needs
+  a yield (`src/guest/stream_wait.c`).
+
+## Boot with the game's data (front-end subset, no sound archive)
+
+- Loads `Code.bgx`, `objects\list.txt`, all of `levels\maddash\maddash.bgx`
+  (the front-end world; its material builder logs "Material Build Error
+  tCount 3 psCount 2 made 1" and "Pixelshader leaves texture 2 unused!"
+  12 times each), `uiglue.bgx`, `levels\ui\gluehud.bgx`; asks for
+  `sounds\music\xbox\18_rollitup.str` (not on the owner's listing of the
+  disc's `media`); opens `movies\Eidos.bik` and `movies\CD_Logo.bik`, the
+  boot logos (Bink's own CPU check, `cpuid`/`pushfd` at 0x0025AC75, runs).
+  Works without `sounds\archive.rkv` ("Failed to open archive file").
+- Then DirectSound's `CMcpxAPU_Commit3dSettings` (0x00284D94) calls through
+  a junk pointer for ever (from 0x00284F2F, its voice list at +0x118 never
+  set up): the real DSOUND without the APU. DirectSound is the next hook
+  set.
