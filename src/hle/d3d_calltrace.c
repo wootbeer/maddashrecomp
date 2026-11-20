@@ -10,25 +10,20 @@ void d3d_trace_call(uint32_t va, const char *name, int args);
 
 void sub_0023B0F0_enter(void) { d3d_trace_call(0x0023B0F0u, "D3DDevice_CreateTexture", 7); }
 void sub_0023B230_enter(void) { d3d_trace_call(0x0023B230u, "?", 0); }
-void sub_0023B6F0_enter(void) { d3d_trace_call(0x0023B6F0u, "D3DDevice_SetTexture", 2); }
 void sub_0023B910_enter(void) { d3d_trace_call(0x0023B910u, "D3DDevice_SetScissors", 3); }
 void sub_0023BD40_enter(void) { d3d_trace_call(0x0023BD40u, "D3DResource_Release", 1); }
 void sub_0023BD90_enter(void) { d3d_trace_call(0x0023BD90u, "D3DResource_Register", 2); }
 void sub_0023BE30_enter(void) { d3d_trace_call(0x0023BE30u, "?", 0); }
 void sub_0023BE90_enter(void) { d3d_trace_call(0x0023BE90u, "D3DTexture_LockRect", 5); }
 void sub_0023BF90_enter(void) { d3d_trace_call(0x0023BF90u, "D3D_SetPushBufferSize", 2); }
-void sub_0023C250_enter(void) { d3d_trace_call(0x0023C250u, "D3DDevice_SetRenderState_Simple", 0); }
 void sub_0023C280_enter(void) { d3d_trace_call(0x0023C280u, "D3DDevice_SetRenderState_Deferred", 0); }
 void sub_0023C300_enter(void) { d3d_trace_call(0x0023C300u, "D3DDevice_SetTextureState_Deferred", 1); }
 void sub_0023C3E0_enter(void) { d3d_trace_call(0x0023C3E0u, "D3DDevice_SetRenderState_CullMode", 1); }
 void sub_0023CF70_enter(void) { d3d_trace_call(0x0023CF70u, "D3DDevice_SetRenderState_StencilEnable", 1); }
 void sub_0023CFF0_enter(void) { d3d_trace_call(0x0023CFF0u, "D3DDevice_SetRenderState_StencilFail", 1); }
 void sub_0023D770_enter(void) { d3d_trace_call(0x0023D770u, "D3DDevice_CreateVertexShader", 4); }
-void sub_0023D910_enter(void) { d3d_trace_call(0x0023D910u, "D3DDevice_LoadVertexShaderProgram", 2); }
-void sub_0023D980_enter(void) { d3d_trace_call(0x0023D980u, "D3DDevice_SelectVertexShader", 2); }
 void sub_0023D9F0_enter(void) { d3d_trace_call(0x0023D9F0u, "D3DDevice_GetVertexShaderSize", 2); }
 void sub_0023DA10_enter(void) { d3d_trace_call(0x0023DA10u, "D3DDevice_SetShaderConstantMode", 1); }
-void sub_0023DD30_enter(void) { d3d_trace_call(0x0023DD30u, "D3DDevice_SetVertexShaderConstant", 3); }
 void sub_0023DDD0_enter(void) { d3d_trace_call(0x0023DDD0u, "D3DDevice_SetVertexShaderInput", 3); }
 void sub_00243180_enter(void) { d3d_trace_call(0x00243180u, "D3D_AllocContiguousMemory", 2); }
 void sub_002465C0_enter(void) { d3d_trace_call(0x002465C0u, "D3DDevice_CreateIndexBuffer", 5); }
@@ -38,9 +33,3 @@ void sub_00246720_enter(void) { d3d_trace_call(0x00246720u, "D3DDevice_RunPushBu
 void sub_002468C0_enter(void) { d3d_trace_call(0x002468C0u, "?", 3); }
 void sub_00246960_enter(void) { d3d_trace_call(0x00246960u, "D3DDevice_EndPushBuffer", 0); }
 void sub_00247530_enter(void) { d3d_trace_call(0x00247530u, "D3DDevice_SetPixelShaderProgram", 0); }
-void sub_00247570_enter(void) { d3d_trace_call(0x00247570u, "D3DDevice_SetPixelShader", 1); }
-void sub_00247A40_enter(void) { d3d_trace_call(0x00247A40u, "D3DDevice_SetVertexData2f", 3); }
-void sub_00247A80_enter(void) { d3d_trace_call(0x00247A80u, "D3DDevice_SetVertexData4f", 5); }
-void sub_00247AE0_enter(void) { d3d_trace_call(0x00247AE0u, "D3DDevice_SetVertexDataColor", 2); }
-void sub_00247B30_enter(void) { d3d_trace_call(0x00247B30u, "D3DDevice_Begin", 1); }
-void sub_00247B70_enter(void) { d3d_trace_call(0x00247B70u, "D3DDevice_End", 0); }
