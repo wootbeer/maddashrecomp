@@ -64,7 +64,6 @@ typedef struct mdr_settings {
                                or 5.1, 3D sounds around four speakers (mixer.c) */
     bool hrtf;              /* 3D sounds through the Xbox's HRTF filters (on 5.1 shared front and
                                back), else a pan, the model head or the corners (dsound_hle.c) */
-    int  save_slot;         /* 1-3: which save file the game sees (mdr_save_dir), chosen before it starts */
 } mdr_settings;
 
 /* 21:9 is the game's widescreen mode made wider (2.37:1, 64:27). */
@@ -118,12 +117,10 @@ extern const char *mdr_data_dir_note;
  * names it. */
 extern char mdr_log_file[MDR_PATH_MAX];
 
-/* The game keeps one save. The console's E: (TDATA, UDATA), where it
- * lives, is a folder under saves/ per save file: E for file 1 (where saves
- * always were), E2 and E3. Written without a trailing separator. */
-void mdr_save_dir(int slot, char *out, size_t len);
-/* Whether that save file holds a save. */
-bool mdr_save_slot_used(int slot);
+/* The console's E: (TDATA, UDATA), where the game keeps its saves (several:
+ * it has its own save-file screen): saves/E in the data folder. Written
+ * without a trailing separator. */
+void mdr_save_dir(char *out, size_t len);
 
 bool mdr_config_load(mdr_config *cfg);
 bool mdr_config_save(const mdr_config *cfg);

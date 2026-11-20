@@ -27,7 +27,7 @@ static mdr_settings settings = { .render_scale2 = 2, .msaa = 1, .aspect = MDR_AS
                                   .master_volume = 100, .gpu_vertex = true, .gpu_fixed = true,
                                   .lsfg_multiplier = 1, .anisotropy = 1, .mouse_aim = true, .mouse_speed = 100,
                                   .skip_logos = true, .rumble = 100, .touch_size = 100, .touch_opacity = 30, .hrtf = true, .depth_reversed = MDR_DEPTH_REVERSED_DEFAULT, .pic_contrast = 100,
-                                  .pic_gamma = 100, .pic_saturation = 100, .save_slot = 1 };
+                                  .pic_gamma = 100, .pic_saturation = 100 };
 
 mdr_settings *mdr_settings_get(void)
 {
@@ -120,42 +120,14 @@ const char *mdr_data_dir(void)
     return data_dir;
 }
 
-void mdr_save_dir(int slot, char *out, size_t len)
+void mdr_save_dir(char *out, size_t len)
 {
     const char *base = mdr_data_dir();
     char sep = base[0] ? base[strlen(base) - 1] : '/';     /* the system's, as the data folder ends */
-    char e[4] = "E";
 
-    if (slot >= 2 && slot <= 3)
-        snprintf(e, sizeof e, "E%d", slot);
-    snprintf(out, len, "%ssaves%c%s", base, sep, e);
+    snprintf(out, len, "%ssaves%cE", base, sep);
 }
 
-/* The game's saves, as the dashboard lays them out: UDATA/<title ID>/<a
- * folder per save>, next to the title's own TitleMeta/TitleImage files. */
-static SDL_EnumerationResult SDLCALL find_save(void *found, const char *dir, const char *name)
-{
-    char path[MDR_PATH_MAX];
-    SDL_PathInfo info;
-
-    snprintf(path, sizeof path, "%s%s", dir, name);
-    if (SDL_GetPathInfo(path, &info) && info.type == SDL_PATHTYPE_DIRECTORY) {
-        *(bool *)found = true;
-        return SDL_ENUM_SUCCESS;
-    }
-    return SDL_ENUM_CONTINUE;
-}
-
-bool mdr_save_slot_used(int slot)
-{
-    char dir[MDR_PATH_MAX], udata[MDR_PATH_MAX];
-    bool found = false;
-
-    mdr_save_dir(slot, dir, sizeof dir);
-    snprintf(udata, sizeof udata, "%s/UDATA/53450007", dir);
-    SDL_EnumerateDirectory(udata, find_save, &found);
-    return found;
-}
 
 static void config_path(char *out, size_t len)
 {
@@ -305,7 +277,7 @@ static bool load_setting(mdr_config *cfg, const char *line, const char *value)
         else if (strcmp(line, "audio_hrtf") == 0)
             settings.hrtf = SDL_atoi(value) != 0;
         else if (strcmp(line, "save_slot") == 0)
-            settings.save_slot = clamp_int(SDL_atoi(value), 1, 3);
+            ;       /* Orta's launcher save files; Mad Dash keeps several saves itself */
         else
             return false;
     }
@@ -361,8 +333,7 @@ static int config_text(const mdr_config *cfg, char *text, size_t cap)
                  "picture_gamma=%d\n"
                  "picture_saturation=%d\n"
                  "audio_3d=%s\n"
-                 "audio_hrtf=%d\n"
-                 "save_slot=%d\n",
+                 "audio_hrtf=%d\n",
                  cfg->game_dir, settings.render_scale2 / 2.0, settings.msaa,
                  settings.aspect == MDR_ASPECT_16_9 ? "16:9" : settings.aspect == MDR_ASPECT_21_9 ? "21:9" : "4:3",
                  settings.fit == MDR_FIT_STRETCH ? "stretch" : settings.fit == MDR_FIT_ZOOM ? "zoom" : "bars",
@@ -384,7 +355,7 @@ static int config_text(const mdr_config *cfg, char *text, size_t cap)
                  settings.picture_crt, settings.pic_brightness, settings.pic_contrast, settings.pic_gamma,
                  settings.pic_saturation, settings.audio_out == MDR_AUDIO_HEADPHONES ? "headphones"
                  : settings.audio_out == MDR_AUDIO_SURROUND ? "surround" : "speakers",
-                 settings.hrtf, settings.save_slot);
+                 settings.hrtf);
     if (n < 0 || (size_t)n >= cap)
         return -1;
     return n + (int)mdr_input_save(text + n, cap - (size_t)n);
@@ -461,7 +432,7 @@ done:
 static const struct { const char *alias, *key; } aliases[] = {
     { "scale", "render_scale" }, { "resolution", "render_scale" }, { "output", "audio_3d" },
     { "audio_out", "audio_3d" }, { "hrtf", "audio_hrtf" }, { "volume", "master_volume" },
-    { "interp", "frame_interp" }, { "fps", "show_fps" }, { "save_file", "save_slot" },
+    { "interp", "frame_interp" }, { "fps", "show_fps" },
 };
 
 /* A command line's setting name as the file's key: false if it is none of
@@ -551,11 +522,11 @@ void mdr_settings_log(void)
     char line[512];
     const mdr_settings *s = mdr_settings_get();
     snprintf(line, sizeof line, "%gx, msaa %d, fxaa %d, anisotropy %d, bloom %d, frame interp %d, vertex programs on %s, "
-             "fixed function on %s, aspect %s%s, frame rate %d, save file %d", s->render_scale2 / 2.0, s->msaa, s->fxaa,
+             "fixed function on %s, aspect %s%s, frame rate %d", s->render_scale2 / 2.0, s->msaa, s->fxaa,
              s->anisotropy, s->bloom, s->frame_interp, s->gpu_vertex ? "GPU" : "CPU", s->gpu_fixed ? "GPU" : "CPU",
              s->aspect == MDR_ASPECT_16_9 ? "16:9" : s->aspect == MDR_ASPECT_21_9 ? "21:9" : "4:3",
              s->aspect == MDR_ASPECT_21_9 ? (s->hud_edges ? " (HUD edges)" : " (HUD centered)") : "",
-             s->fps30 ? 30 : 60, s->save_slot);
+             s->fps30 ? 30 : 60);
     if (strcmp(line, last)) {
         SDL_Log("settings%s: %s", last[0] ? " changed" : "", line);
         SDL_strlcpy(last, line, sizeof last);

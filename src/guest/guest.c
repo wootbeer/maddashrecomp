@@ -137,11 +137,10 @@ bool mdr_guest_init(const void *xbe_data, size_t xbe_size,
     xbox_kernel_init();
     {
         /* The console's E: (TDATA, UDATA) holds saves; keep it out of the
-         * game folder, which a re-import replaces wholesale. A folder per
-         * save file, the one picked in the launcher (config.c). */
+         * game folder, which a re-import replaces wholesale (config.c). */
         char hdd[MDR_PATH_MAX];
-        mdr_save_dir(mdr_settings_get()->save_slot, hdd, sizeof hdd);
-        SDL_Log("guest: save file %d (%s)", mdr_settings_get()->save_slot, hdd);
+        mdr_save_dir(hdd, sizeof hdd);
+        SDL_Log("guest: saves in %s", hdd);
         SDL_CreateDirectory(hdd);
         xbox_path_set_hdd_dir(hdd);
     }
