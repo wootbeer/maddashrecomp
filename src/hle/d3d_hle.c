@@ -592,32 +592,56 @@ static void nv_method(uint32_t m, uint32_t v)
     }
 }
 
-/* Read the methods from pb_mark to the cursor. A jump or call in the
- * stream, or a cursor that moved somewhere else, ends the read there. */
+/* Read the methods from pb_mark to the cursor.
+ *
+ * In the device's ring (dev+0x10 to dev+0x14) the reader follows the jump
+ * MakeSpace (0x00240810) writes when the ring wraps (start | 1, a physical
+ * address) back to the start. It stopped there before and took the cursor
+ * as read: whatever the game wrote after a wrap until its next draw was
+ * lost, bone matrices among it, and those vertices went to the world's
+ * origin ("tethers" off the characters). Elsewhere (a buffer being
+ * recorded), a jump or call ends the read, as before. */
 static void pb_catch_up(void)
 {
-    uint32_t dev = MEM32(D3D_DEVICE_PTR), cur, p;
+    uint32_t dev = MEM32(D3D_DEVICE_PTR), cur, p, lo, hi, walked = 0;
+    bool ring;
 
     if (!dev)
         return;
     cur = MEM32(dev);
     p = pb_mark;
-    if (!p || cur < p || cur - p > 0x400000u) {
+    lo = MEM32(dev + 0x10);
+    hi = MEM32(dev + 0x14);
+    ring = lo < hi && hi - lo <= 0x4000000u && p >= lo && p < hi && cur >= lo && cur <= hi;
+    if (!p || (!ring && (cur < p || cur - p > 0x400000u))) {
         pb_mark = cur;
         return;
     }
-    while (p < cur) {
-        uint32_t h = MEM32(p), m, n;
-        p += 4;
+    while (p != cur && walked <= (ring ? hi - lo : 0x400000u)) {
+        uint32_t h = MEM32(p), m, n, end;
+        if ((h & 3) == 1 && ring) {         /* the wrap: jump to the start */
+            uint32_t t = (h & ~3u) | 0x80000000u;
+            static int said;
+            if (t < lo || t >= hi)
+                break;
+            if (said < 2 && ++said)
+                SDL_Log("d3d: push buffer wrapped (0x%08x -> 0x%08x), read on", p, t);
+            walked += 4;
+            p = t;
+            continue;
+        }
         if ((h & 3) || (h & 0xE0000000u) == 0x20000000u)
-            break;                          /* jump or call */
+            break;                          /* another jump, or a call */
+        p += 4;
         m = h & 0x1FFCu;
         n = (h >> 18) & 0x7FFu;
-        if (p + 4 * n > cur)
-            break;
+        end = p + 4 * n;
+        if ((cur >= p && end > cur) || (ring && end > hi))
+            break;                          /* a method not finished yet */
         for (uint32_t k = 0; k < n; k++)
             nv_method((h & 0x40000000u) ? m : m + 4 * k, MEM32(p + 4 * k));
-        p += 4 * n;
+        p = end;
+        walked += 4 + 4 * n;
     }
     pb_mark = cur;
 }

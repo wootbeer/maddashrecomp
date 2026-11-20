@@ -237,8 +237,20 @@ static float side_gain(const voice *v, uint32_t bin)
  * extra rolloff, flRoomRolloffFactor, is 0 wherever Orta sets it.) */
 static void update_gains(voice *v)
 {
-    bool sends = false;
+    bool sends = false, fronts = false;
     float dist = v->desc.positional ? v->dist : 1.0f;
+    int fl = 0, fr = 0;
+
+    /* Stereo output: a voice that feeds the front pair plays from it. A
+     * mono voice's default mixbins are all six speakers (the library's table
+     * 0x0028BF68), meant for 5.1; folding its centre and backs into each
+     * side as well put the same signal in three times, 7.7 dB over a stereo
+     * voice at the same level (the menus' water over their music). */
+    for (int i = 0; i < v->desc.bin_count; i++) {
+        fl |= v->desc.bins[i].bin == MDR_BIN_FRONT_LEFT;
+        fr |= v->desc.bins[i].bin == MDR_BIN_FRONT_RIGHT;
+    }
+    fronts = out_channels == 2 && fl && fr && !v->pan6;
 
     memset(v->gain, 0, sizeof v->gain);
     for (int i = 0; i < v->desc.bin_count; i++) {
@@ -260,6 +272,8 @@ static void update_gains(voice *v)
             float g = db100_to_gain(v->desc.bins[i].volume) * side_gain(v, bin) * v->direct;
             v->gain[ch][bin] = g * v->hrtf_front;
             v->gain[ch][bin == MDR_BIN_FRONT_LEFT ? MDR_BIN_BACK_LEFT : MDR_BIN_BACK_RIGHT] = g * v->hrtf_back;
+        } else if (bin < MDR_BIN_SPEAKERS && fronts && bin != MDR_BIN_FRONT_LEFT && bin != MDR_BIN_FRONT_RIGHT) {
+            /* stereo: the front pair only (above) */
         } else if (bin < MDR_BIN_SPEAKERS)
             v->gain[ch][bin] = db100_to_gain(v->desc.bins[i].volume) * side_gain(v, bin) * v->direct *
                                (v->hrtf ? v->hrtf_front : 1.0f);
@@ -691,6 +705,9 @@ void mdr_mixer_apply_output(void)
      * the pacer (no device) just mixes in the new layout. */
     SDL_LockMutex(lock);
     out_channels = want;
+    for (int i = 0; i < MAX_VOICES; i++)
+        if (voices[i].used)
+            update_gains(&voices[i]);
     SDL_UnlockMutex(lock);
     if (!stream)
         return;
