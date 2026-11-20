@@ -601,14 +601,13 @@ static void nv_method(uint32_t m, uint32_t v)
  * lost, bone matrices among it, and those vertices went to the world's
  * origin ("tethers" off the characters). Elsewhere (a buffer being
  * recorded), a jump or call ends the read, as before. */
-static void pb_catch_up(void)
+static void pb_read_to(uint32_t cur)
 {
-    uint32_t dev = MEM32(D3D_DEVICE_PTR), cur, p, lo, hi, walked = 0;
+    uint32_t dev = MEM32(D3D_DEVICE_PTR), p, lo, hi, walked = 0;
     bool ring;
 
     if (!dev)
         return;
-    cur = MEM32(dev);
     p = pb_mark;
     lo = MEM32(dev + 0x10);
     hi = MEM32(dev + 0x14);
@@ -646,13 +645,49 @@ static void pb_catch_up(void)
     pb_mark = cur;
 }
 
+static void pb_catch_up(void)
+{
+    uint32_t dev = MEM32(D3D_DEVICE_PTR);
+    if (dev)
+        pb_read_to(MEM32(dev));
+}
+
+/* Recording a push buffer moves the cursor away from the ring and back.
+ * The reader follows it without a gap: what the game (and the lazy state
+ * flush, SetStateVB, both calls make first) wrote to the ring before the
+ * switch is read up to the ring cursor Begin saves (dev+0x400), and after
+ * End the ring is read on from where it left off. Before, each switch took
+ * the new cursor as read, and methods written just before one were lost:
+ * a character's bone matrices among them, drawn with the last model's
+ * ("tethers"; Orta's were lost another way, its commit d072caa). */
+#define DEV_RING_SAVED 0x400u
+
 /* D3DDevice_BeginPushBuffer(pPushBuffer): `ret 4`. The cursor moves to the
  * buffer's data: read from there. */
 extern void sub_002466B0_gen(void);
 void sub_002466B0(void)
 {
+    uint32_t dev;
+
     sub_002466B0_gen();
-    pb_mark = MEM32(MEM32(D3D_DEVICE_PTR));
+    dev = MEM32(D3D_DEVICE_PTR);
+    if (dev) {
+        pb_read_to(MEM32(dev + DEV_RING_SAVED));
+        pb_mark = MEM32(dev);
+    }
+}
+
+/* D3DDevice_EndPushBuffer(): `ret`. The recorded buffer read to its end,
+ * then the ring from where it was left. */
+extern void sub_00246960_gen(void);
+void sub_00246960(void)
+{
+    uint32_t dev = MEM32(D3D_DEVICE_PTR), ring = dev ? MEM32(dev + DEV_RING_SAVED) : 0;
+
+    pb_catch_up();
+    sub_00246960_gen();
+    if (dev && ring == MEM32(dev))
+        pb_mark = ring;
 }
 
 /* ── State capture ────────────────────────────────────────────────────────
