@@ -21,6 +21,8 @@
 #include <stdint.h>
 
 bool mdr_gfx_init(int width, int height);
+/* A warm reboot: textures are checked in full again at their next use. */
+void mdr_gfx_forget_textures(void);
 /* A pipeline with GPU vertex programs (or, fixed_function, GPU fixed-function
  * vertices) failed to build on this GPU: those vertices go to the CPU. */
 bool mdr_gfx_vertex_shader_failed(bool fixed_function);

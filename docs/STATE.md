@@ -7,14 +7,15 @@ for Mad Dash (`MadDashRecomp`, `maddashrecomp.ini`, `MDR_*`, `mdr_*`). The
 game recompiles, builds, plays its logo movies with sound and shows its
 title screen and its menus as on the console, and takes controller input
 (START opens Adventure, A its sign-up screen: cloud screenshots with
-`MDR_INPUT_SCRIPT`); left idle it relaunches itself into the attract demo
-(`relaunch.c`). Facts about the game and the boots so far:
+`MDR_INPUT_SCRIPT`); left idle it relaunches itself into the attract demo.
+Its level loads (it relaunches its own XBE) reboot in place, in the same
+window (`relaunch.c`, `mdr_guest_reboot`, patch 0047). Facts about the game and the boots so far:
 `docs/maddash-facts.md`.
 
 ## How it fits together
 
 - `tools/recomp.py`: the USA `default.xbe` (or the ISO) -> `gen/` through
-  xboxrecomp and patches 0001-0043. Data sections `.data` and `BINKDATA` are
+  xboxrecomp and patches 0001-0047. Data sections `.data` and `BINKDATA` are
   excluded from the code sweep. 24 seeds from the first boot
   (`tools/mdr_seeds.json`).
 - `src/xbe.c`, `tools/recomp.py`: title ID 45530001, the one known dump
@@ -42,7 +43,9 @@ title screen and its menus as on the console, and takes controller input
   main thread holds the guest CPU lock) and 0046 (cpuid, pushfd, popfd
   lifted: Bink's CPU check): the stream reader races, found in
   this game (`docs/maddash-facts.md`). Worth sending upstream, and to
-  Orta Recomp, whose main thread also ran unlocked.
+  Orta Recomp, whose main thread also ran unlocked. 0047: a warm reboot
+  (the title boots again in the same process; old threads park at the
+  guest CPU lock, a boot generation added to 0023's lock).
 - `src/hle/input_hle.c`: Orta's input on SDL3, re-addressed for XAPI 3911
   (XGetDevices, XInputOpen/Close/GetState; XGetDeviceChanges runs on the
   masks it keeps current); no rumble (the game calls no XInputSetState).

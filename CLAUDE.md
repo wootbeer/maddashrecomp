@@ -24,7 +24,8 @@ address or name instead.
 - **xboxrecomp patches must not overlap.** `recomp.py` and CMake decide a
   patch is applied with `git apply --reverse --check`, one patch at a time.
   To change lines an earlier patch added, edit that patch instead.
-  There are 46 now: 0001-0043 as Orta Recomp's, 0044-0046 found here.
+  There are 47 now: 0001-0043 as Orta Recomp's (0023 extended here with
+  the boot generation for 0047), 0044-0047 found here.
 - **Third-party projects** (Cxbx-Reloaded and its XbSymbolDatabase, xemu,
   other ports): facts only, no code. Symbol databases and listings are read
   from a local clone at run time, never committed. Our own GPL code from

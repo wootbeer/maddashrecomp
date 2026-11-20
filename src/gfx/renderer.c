@@ -1849,6 +1849,7 @@ typedef struct gtex {
 } gtex;
 
 static gtex textures[MAX_TEXTURES];
+static int ntextures;
 /* DXT1/3/5 textures go to the GPU as they are, as BC1-BC3, when it reads
  * those (desktop GPUs, and the RP6's Adreno): decoded to RGBA they were
  * four to eight times the bytes for every texel the GPU reads, on phones
@@ -1856,7 +1857,6 @@ static gtex textures[MAX_TEXTURES];
  * BC decoding is DXT's (S3TC), within a step of rounding in the blends.
  * MDR_BC_TEXTURES=0 decodes them on the CPU as before. */
 static bool bc_textures;
-static int ntextures;
 
 /* A texture's bytes, to notice when the game rewrites them: it runs over
  * every texture in use every frame, so it has to be fast more than strong.
@@ -2296,9 +2296,22 @@ static tex_slot texture_for(const mdr_tex_ref *t)
     levels = info.known && !tex_level0 ? mdr_xtex_level_count(&info) : 1;
     if (!g) {
         SDL_GPUTextureCreateInfo ti;
-        if (ntextures == MAX_TEXTURES)
-            return slot;
-        g = &textures[ntextures++];
+        if (ntextures == MAX_TEXTURES) {
+            /* Full (a long session, each level's textures at addresses the
+             * last level's had): the one unused longest takes this one's
+             * place, if no frame still on its way to the screen uses it. */
+            gtex *old = &textures[0];
+            for (int i = 1; i < ntextures; i++)
+                if (textures[i].last_used < old->last_used)
+                    old = &textures[i];
+            if (old->last_used + 8 >= frames)
+                return slot;
+            if (old->tex)
+                SDL_ReleaseGPUTexture(dev, old->tex);
+            g = old;
+        } else {
+            g = &textures[ntextures++];
+        }
         memset(g, 0, sizeof *g);
         g->data = t->data;
         g->format_word = t->format_word;
@@ -7494,5 +7507,18 @@ void mdr_gfx_main_loop(void)
             if (!have_swapchain)
                 SDL_Delay(1);
         }
+    }
+}
+
+/* A warm reboot (src/guest/guest.c): the same guest addresses will hold the
+ * new boot's textures. Each is hashed in full and uploaded again the next
+ * time it is used, rather than trusted on a few samples. */
+void mdr_gfx_forget_textures(void)
+{
+    for (int i = 0; i < ntextures; i++) {
+        textures[i].stable = 0;
+        textures[i].uploaded = false;
+        textures[i].hash = 0;
+        textures[i].sample = 0;
     }
 }

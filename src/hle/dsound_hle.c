@@ -1027,3 +1027,19 @@ void sub_00283A1C(void)
                             (int32_t)MEM32(ARG(1) + 8));
     RETURN(12, DS_OK);
 }
+
+/* ── Warm reboot (src/guest/guest.c) ──────────────────────────────────────
+ * The title boots again in place: its voices stop (without reporting to
+ * memory about to be reset) and every object of the old boot is forgotten. */
+void mdr_dsound_reboot(void)
+{
+    mdr_mixer_drop_voices();
+    the_dsound = 0;
+    fx_desc = 0;
+    memset(src3d, 0, sizeof src3d);
+    memset(streams, 0, sizeof streams);
+    listener.pos[0] = listener.pos[1] = listener.pos[2] = 0.0f;
+    listener.front[0] = 0.0f; listener.front[1] = 0.0f; listener.front[2] = 1.0f;
+    listener.top[0] = 0.0f; listener.top[1] = 1.0f; listener.top[2] = 0.0f;
+    listener.rolloff = 1.0f;
+}

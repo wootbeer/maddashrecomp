@@ -30,6 +30,19 @@ void mdr_guest_cpu_load(const mdr_guest_cpu *c);
 
 void mdr_guest_shutdown(void);
 
+/* Run the title from `entry` on this thread with the registers saved by
+ * mdr_guest_cpu_save, and again from the start each time it reboots in
+ * place (mdr_guest_reboot). Returns when the title exits. */
+void mdr_guest_run_boots(const mdr_guest_cpu *cpu, uint32_t entry);
+
+/* Boot the title again in this process, as the console does when a title
+ * launches itself (relaunch.c), with `launch_page` as its launch data: memory
+ * and the kernel layer as at start-up, our D3D, sound and input state
+ * forgotten, the window kept. Called on a guest thread inside the kernel
+ * call that rebooted; does not return, unless the kernel layer cannot (no
+ * guest CPU lock): false, nothing changed. */
+bool mdr_guest_reboot(const uint8_t *launch_page, size_t launch_bytes);
+
 /* Switching between the disc's programs (src/guest/relaunch.c): when a title
  * boots one this build has, MadDashRecomp starts again on it with its launch
  * data. Install before running the title; load the data handed over (from

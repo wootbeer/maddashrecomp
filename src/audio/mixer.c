@@ -780,6 +780,16 @@ void mdr_voice_destroy(int id)
     SDL_UnlockMutex(lock);
 }
 
+/* Every voice gone at once, none reporting its packets (a warm reboot:
+ * the guest memory they would report to is about to be reset). */
+void mdr_mixer_drop_voices(void)
+{
+    SDL_LockMutex(lock);
+    for (int i = 0; i < MAX_VOICES; i++)
+        voices[i].used = false;
+    SDL_UnlockMutex(lock);
+}
+
 #define WITH_VOICE(id, body) do {               \
         voice *v;                               \
         SDL_LockMutex(lock);                    \

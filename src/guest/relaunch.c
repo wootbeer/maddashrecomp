@@ -1,22 +1,27 @@
 /*
- * A title launching another image (from Orta Recomp, whose disc had two
- * programs). Mad Dash Racing has one: a launch of the dashboard or of an
- * image this build does not have exits.
+ * A title launching an image (from Orta Recomp, whose disc had two
+ * programs). Mad Dash Racing has one, and launches it again to load every
+ * level: the front end boots default.xbe with the race in its launch data,
+ * and the race boots it again to go back. A launch of the dashboard or of
+ * an image this build does not have exits.
  *
- * A title boots another image with XLaunchNewImage: it fills the kernel's
- * launch data page (type, title, path, then 3 KB of its own data) and asks
+ * A title boots an image with XLaunchNewImage: it fills the kernel's launch
+ * data page (type, title, path, then 3 KB of its own data) and asks
  * HalReturnToFirmware to reboot (routine 2). xboxrecomp's kernel calls
- * xbox_relaunch_hook there (patch 0037). If the image is a program this
- * build has, the page is saved to a file and MadDashRecomp starts again on that
- * program with --launch-data; the new run puts the page back where the title
- * reads it (XGetLaunchInfo), as the console's reboot keeps it.
+ * xbox_relaunch_hook there (patch 0037).
  *
- * A new process, not a switch inside this one: the kernel layer and our
- * hooks were written for one boot per process (timers, threads blocked in
- * waits, the heap, caches keyed by guest addresses), and a restart resets
- * all of it. The window closes and opens again; settings, the window's
- * place and the log carry on (the log is appended to). On Android the
- * activity starts again the same way (MadDashActivity.restartWith).
+ * The program running now, booted again: in place (mdr_guest_reboot, patch
+ * 0047), keeping the window, the GPU device and the sound output. Memory
+ * and the kernel layer start over as at start-up, the page is put back where
+ * the title reads it (XGetLaunchInfo), as the console's reboot keeps it, and
+ * the title's entry point runs again. The old boot's other threads park.
+ *
+ * Another program of this build (none in Mad Dash), or a reboot the kernel
+ * layer cannot do in place: the page is saved to a file and MadDashRecomp
+ * starts again on that program with --launch-data. The window closes and
+ * opens again; settings, the window's place and the log carry on (the log
+ * is appended to). On Android the activity starts again the same way
+ * (MadDashActivity.restartWith).
  */
 
 #include "guest/guest.h"
@@ -272,6 +277,14 @@ static void relaunch_hook(ULONG routine)
         SDL_Log("launch: %s asks for %s, which this build cannot run; exiting",
                 mdr_program_name(mdr_program_active()), path);
         return;
+    }
+    if (program == mdr_program_active()) {
+        uint8_t data[PAGE_SIZE];
+        memcpy(data, guest(page), PAGE_SIZE);
+        SDL_Log("launch: %s boots %s again (%s); rebooting in place",
+                mdr_program_name(program), mdr_program_xbe(program), path);
+        mdr_guest_reboot(data, PAGE_SIZE);      /* returns only if it cannot */
+        SDL_Log("launch: cannot reboot in place; restarting");
     }
     launch_data_path(file, sizeof file);
     io = SDL_IOFromFile(file, "wb");

@@ -1,7 +1,7 @@
 diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
 --- a/src/kernel/kernel_bridge.c
 +++ b/src/kernel/kernel_bridge.c
-@@ -461,6 +461,12 @@
+@@ -461,6 +461,12 @@ struct bridge_thread_start {
  
  static void bridge_write_handle(uint32_t handle_va, HANDLE h);
  
@@ -14,7 +14,7 @@ diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
  static void bridge_run_thread_inline(recomp_func_t fn, uint32_t ctx1,
                                       uint32_t ctx2)
  {
-@@ -1831,7 +1837,7 @@
+@@ -1831,7 +1837,7 @@ static void bridge_NtUserIoApcDispatcher(void)
      g_esp -= 4; BRIDGE_MEM32(g_esp) = information;
      g_esp -= 4; BRIDGE_MEM32(g_esp) = (status == 0) ? 0 : status;
      g_esp -= 4; BRIDGE_MEM32(g_esp) = 0;
@@ -23,7 +23,7 @@ diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
  
      g_eax = 0;
  }
-@@ -2070,7 +2076,7 @@
+@@ -2070,7 +2076,7 @@ static int kernel_run_dpc(uint32_t dpc_va, uint32_t arg1, uint32_t arg2)
      g_esp -= 4; BRIDGE_MEM32(g_esp) = context;
      g_esp -= 4; BRIDGE_MEM32(g_esp) = dpc_va;
      g_esp -= 4; BRIDGE_MEM32(g_esp) = 0;
@@ -32,7 +32,7 @@ diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
      return 1;
  }
  
-@@ -2110,7 +2116,7 @@
+@@ -2110,7 +2116,7 @@ static void bridge_KeSynchronizeExecution(void)
       * the dummy return address and the argument, so g_esp needs no fixup. */
      g_esp -= 4; BRIDGE_MEM32(g_esp) = context;
      g_esp -= 4; BRIDGE_MEM32(g_esp) = 0;
@@ -41,7 +41,7 @@ diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
      /* g_eax is whatever the routine returned, which is this call's result. */
  }
  
-@@ -2258,7 +2264,7 @@
+@@ -2258,7 +2264,7 @@ static int kernel_raise_interrupt(uint32_t vector)
      g_esp -= 4; BRIDGE_MEM32(g_esp) = context;
      g_esp -= 4; BRIDGE_MEM32(g_esp) = kint;
      g_esp -= 4; BRIDGE_MEM32(g_esp) = 0;
@@ -50,7 +50,7 @@ diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
      return (int)(g_eax & 1u);
  }
  
-@@ -3400,7 +3406,7 @@
+@@ -3400,7 +3406,7 @@ static void bridge_RtlUnwind(void)
                  g_esp -= 4; BRIDGE_MEM32(g_esp) = reg;
                  g_esp -= 4; BRIDGE_MEM32(g_esp) = exc_record;
                  g_esp -= 4; BRIDGE_MEM32(g_esp) = 0;  /* return address */
@@ -59,7 +59,7 @@ diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
                  /* 16, not 20: the handler's own `ret` has already taken the
                   * return address off, leaving just the four arguments for the
                   * caller to drop. Cleaning 20 leaves esp four bytes high, and
-@@ -7998,13 +8004,13 @@
+@@ -7998,13 +8004,13 @@ static void bridge_PsCreateSystemThread(void)
                  uint32_t stack_top;
  
                  if (inline_workers && !strcmp(inline_workers, "inline")) {
@@ -75,16 +75,22 @@ diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
                  } else {
                      HANDLE th = bridge_spawn_thread(fn, start_context1,
                                                      start_context2, stack_top);
-@@ -9547,6 +9553,8 @@
+@@ -9547,6 +9553,14 @@ static RECOMP_TLS int t_guest_thread;     /* this host thread runs a guest threa
  static RECOMP_TLS int t_guest_held;       /* and holds the guest CPU */
  static RECOMP_TLS int t_dispatch_depth;
  
 +int xbox_thread_suspend_pending(void);   /* kernel_thread.c */
 +
++/* Boots of the title in this process (xbox_kernel_reboot_begin/end, patch
++ * 0047). A guest thread belongs to the boot it joined in; one left from an
++ * earlier boot never runs guest code again. */
++volatile LONG g_xbox_boot_gen = 1;
++static RECOMP_TLS LONG t_boot_gen;
++
  static int guest_cpu_enabled(void)
  {
      if (g_guest_cpu_on < 0) {
-@@ -9559,15 +9567,33 @@
+@@ -9559,15 +9573,42 @@ static int guest_cpu_enabled(void)
      return g_guest_cpu_on;
  }
  
@@ -101,6 +107,13 @@ diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
 +        while (xbox_thread_suspend_pending())
 +            Sleep(1);
 +        EnterCriticalSection(&g_guest_cpu);
++        if (t_boot_gen && t_boot_gen != g_xbox_boot_gen) {
++            /* A thread of a boot that is gone: its memory, objects and
++             * stack were reset under it. Parked, holding nothing. */
++            LeaveCriticalSection(&g_guest_cpu);
++            for (;;)
++                Sleep(60000);
++        }
 +        if (!xbox_thread_suspend_pending())
 +            break;
 +        LeaveCriticalSection(&g_guest_cpu);
@@ -117,12 +130,14 @@ diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
 -        EnterCriticalSection(&g_guest_cpu);
 -        t_guest_held = 1;
 -    }
++    if (!t_boot_gen)
++        t_boot_gen = g_xbox_boot_gen;
 +    if (guest_cpu_enabled() && !t_guest_held)
 +        guest_cpu_acquire();
  }
  
  void guest_cpu_part(void)
-@@ -9579,6 +9605,46 @@
+@@ -9579,6 +9620,46 @@ void guest_cpu_part(void)
      t_guest_thread = 0;
  }
  
@@ -169,7 +184,7 @@ diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
  /* A guest thread lets go of the guest CPU for the length of every kernel
   * call. */
  static void kernel_thunk_dispatch(void)
-@@ -9594,11 +9660,10 @@
+@@ -9594,11 +9675,10 @@ static void kernel_thunk_dispatch(void)
      /* Back to guest code: take the CPU again. Only at the outermost call --
       * a guest callback a bridge runs (an APC) returns into the bridge, not to
       * the thread's own code -- and only if the thread still exists as one. */
@@ -188,7 +203,7 @@ diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
 diff --git a/src/kernel/kernel_thread.c b/src/kernel/kernel_thread.c
 --- a/src/kernel/kernel_thread.c
 +++ b/src/kernel/kernel_thread.c
-@@ -344,12 +344,89 @@
+@@ -344,12 +344,89 @@ NTSTATUS __stdcall xbox_NtDuplicateObject(
      return STATUS_SUCCESS;
  }
  
@@ -278,7 +293,7 @@ diff --git a/src/kernel/kernel_thread.c b/src/kernel/kernel_thread.c
      /*
       * SuspendThread returns the previous suspend count, or (DWORD)-1 on
       * failure. The Xbox call reports that count through an out-parameter, so
-@@ -378,6 +455,27 @@
+@@ -378,6 +455,27 @@ NTSTATUS __stdcall xbox_NtResumeThread(
  {
      DWORD prev;
  

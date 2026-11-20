@@ -1,0 +1,386 @@
+diff --git a/src/kernel/kernel.h b/src/kernel/kernel.h
+--- a/src/kernel/kernel.h
++++ b/src/kernel/kernel.h
+@@ -527,6 +527,16 @@ ULONG_PTR xbox_resolve_ordinal(ULONG ordinal);
+ /* Kernel bridge (kernel_bridge.c) - resolve kernel thunks in Xbox memory */
+ void xbox_kernel_bridge_init(void);
+ 
++/* A warm reboot: the title starts again in this process, on the calling
++ * thread (see kernel_bridge.c). begin takes the guest CPU and forgets the
++ * old boot's kernel objects; the host then reloads memory
++ * (xbox_MemoryLayoutReload), calls xbox_kernel_bridge_init again, puts the
++ * launch data back and calls end, after which the calling thread is the new
++ * boot's and holds the guest CPU. Other threads of the old boot park.
++ * begin returns 0, changing nothing, without RECOMP_GUEST_LOCK=1. */
++int  xbox_kernel_reboot_begin(void);
++void xbox_kernel_reboot_end(void);
++
+ /**
+  * Per-title kernel ordinal remap.
+  *
+diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
+--- a/src/kernel/kernel_bridge.c
++++ b/src/kernel/kernel_bridge.c
+@@ -2150,6 +2150,40 @@ static void bridge_HalReadSMCTrayState(void)
+  *
+  * Returns 1 if the routine was found and called.
+  */
++/* The boot running now (patch 0023's guest CPU lock; xbox_kernel_reboot_end). */
++extern volatile LONG g_xbox_boot_gen;
++
++/* The timer thread's TIB comes from the title's heap: the boot it was made
++ * for. After a warm reboot it takes one from the new boot's heap. */
++static RECOMP_TLS LONG t_dpc_tib_gen;
++
++static int kernel_run_dpc(uint32_t dpc_va, uint32_t arg1, uint32_t arg2);
++
++/* A DPC taken off the queue or a timer before a warm reboot belongs to the
++ * boot that is gone: `gen` is the boot it was taken in. Checked with the
++ * guest CPU held, which a reboot holds throughout. */
++static int kernel_run_dpc_of(uint32_t dpc_va, uint32_t arg1, uint32_t arg2, LONG gen)
++{
++    int took, ran;
++
++    if (!dpc_va)
++        return 0;
++    took = guest_cb_enter();
++    if (gen != g_xbox_boot_gen) {
++        guest_cb_leave(took);
++        return 0;
++    }
++    if (t_dpc_tib_gen && t_dpc_tib_gen != g_xbox_boot_gen) {
++        uint32_t tib = xbox_AllocThreadTib();
++        if (tib)
++            g_fs_base = tib;
++        t_dpc_tib_gen = g_xbox_boot_gen;
++    }
++    ran = kernel_run_dpc(dpc_va, arg1, arg2);
++    guest_cb_leave(took);
++    return ran;
++}
++
+ static int kernel_run_dpc(uint32_t dpc_va, uint32_t arg1, uint32_t arg2)
+ {
+     uint32_t routine, context;
+@@ -2436,7 +2470,9 @@ static void kernel_drain_dpcs(void)
+ {
+     for (;;) {
+         PendingDpc d;
++        LONG gen;
+         dpc_lock();
++        gen = g_xbox_boot_gen;
+         if (g_dpc_head == g_dpc_tail) {
+             LeaveCriticalSection(&g_dpc_lock);
+             break;
+@@ -2449,7 +2485,7 @@ static void kernel_drain_dpcs(void)
+             BRIDGE_MEM8(d.dpc + 2) = 0;
+         LeaveCriticalSection(&g_dpc_lock);
+         if (d.dpc)
+-            kernel_run_dpc(d.dpc, d.arg1, d.arg2);
++            kernel_run_dpc_of(d.dpc, d.arg1, d.arg2, gen);
+     }
+ }
+ 
+@@ -2710,6 +2746,7 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
+             return 0;
+         }
+         g_fs_base = tib;
++        t_dpc_tib_gen = g_xbox_boot_gen;
+     }
+ 
+     for (;;) {
+@@ -2723,8 +2760,10 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
+ 
+         for (i = 0; i < XBOX_MAX_TIMERS; i++) {
+             uint32_t dpc, fired_va;
++            LONG gen;
+ 
+             EnterCriticalSection(&g_timer_lock);
++            gen = g_xbox_boot_gen;
+             if (!g_timers[i].timer_va || now < g_timers[i].due_ms) {
+                 LeaveCriticalSection(&g_timer_lock);
+                 continue;
+@@ -2739,7 +2778,9 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
+ 
+             /* Outside the lock: the routine can set or cancel timers. */
+             if (dpc)
+-                kernel_run_dpc(dpc, 0, 0);
++                kernel_run_dpc_of(dpc, 0, 0, gen);
++            if (gen != g_xbox_boot_gen)
++                continue;               /* a timer of the boot that is gone */
+ 
+             /* Wake anyone parked on the timer's shadow event; a timer with no
+              * DPC is just a kernel sleep. */
+@@ -10291,3 +10332,99 @@ void xbox_kernel_bridge_init(void)
+             KERNEL_VA_BASE, KERNEL_VA_BASE + (resolved - 1) * 4);
+ 
+ }
++
++/* ── Warm reboot ──────────────────────────────────────────
++ *
++ * A title that loads its levels by launching itself again (XLaunchNewImage,
++ * then HalReturnToFirmware) reboots the console each time. Done as a new
++ * process, the window closes and opens on every load. xbox_kernel_reboot_begin
++ * and _end let a host do it in place instead, on the thread that asked:
++ *
++ *   xbox_kernel_reboot_begin();       take the guest CPU, forget the boot's objects
++ *   xbox_MemoryLayoutReload(xbe, n);  memory and allocators as at start-up
++ *   xbox_kernel_bridge_init();        kernel data and thunks again
++ *   (launch data page back in place)
++ *   xbox_kernel_reboot_end();         the calling thread is the new boot's
++ *   ... and run the entry point again, from a stack the host unwound.
++ *
++ * The other guest threads of the old boot are not stopped (a host thread
++ * cannot be stopped safely in the middle of a call); each parks the next time
++ * it would run guest code (guest_cpu_acquire), and the host objects it waits
++ * on are left alone. The guest CPU lock (RECOMP_GUEST_LOCK=1) is required: it
++ * is what keeps them out while memory is reset.
++ *
++ * Forgotten, not destroyed: Ke object shadows, open files and handles stay
++ * with the threads that may still wait on them, a few host handles per boot.
++ * A lock a parked thread still holds keeps its table slot.
++ *
++ * ponytail: a thread created moments before the reboot that has not reached
++ * guest_cpu_join yet joins the new boot and runs its routine there. */
++void xbox_cs_table_reboot(void);        /* kernel_rtl.c */
++void xbox_symlinks_reboot(void);        /* kernel_io.c */
++void recomp_jmp_reset(void);            /* xbox_memory_layout.c */
++
++int xbox_kernel_reboot_begin(void)
++{
++    int i;
++
++    if (!guest_cpu_enabled())
++        return 0;
++    if (!t_guest_held) {
++        EnterCriticalSection(&g_guest_cpu);
++        t_guest_held = 1;
++    }
++
++    g_thread_call_count = 0;            /* the next first thread is the title's main one */
++    g_spawn_kthread = 0;
++
++    if (g_timer_started) {
++        EnterCriticalSection(&g_timer_lock);
++        memset(g_timers, 0, sizeof g_timers);
++        LeaveCriticalSection(&g_timer_lock);
++    }
++    dpc_lock();
++    g_dpc_head = g_dpc_tail = 0;
++    LeaveCriticalSection(&g_dpc_lock);
++    memset(g_connected_isr, 0, sizeof g_connected_isr);
++
++    ke_shadow_init();
++    EnterCriticalSection(&g_ke_shadow_cs);
++    memset(g_ke_shadow, 0, sizeof g_ke_shadow);     /* handles left to their waiters */
++    LeaveCriticalSection(&g_ke_shadow_cs);
++
++    bridge_try_cs_init_guard();
++    EnterCriticalSection(&g_try_cs_guard);
++    for (i = 0; i < BRIDGE_TRY_CS_SLOTS; i++) {
++        BRIDGE_TRY_CS_SLOT *slot = &g_try_cs[i];
++        if (!slot->key)
++            continue;
++        if (slot->ready && TryEnterCriticalSection(&slot->cs)) {
++            LeaveCriticalSection(&slot->cs);
++            slot->key = 0;              /* free; the lock is reused as it is */
++        } else {
++            slot->key = 1;              /* held by a parked thread: never matches */
++        }
++    }
++    LeaveCriticalSection(&g_try_cs_guard);
++
++    memset(s_ethreads, 0, sizeof s_ethreads);
++    memset(g_async_handles, 0, sizeof g_async_handles);
++    memset(g_part_handles, 0, sizeof g_part_handles);
++    xbox_cs_table_reboot();
++    xbox_symlinks_reboot();
++    fprintf(stderr, "  [KERNEL] reboot: boot %ld ends\n", (long)g_xbox_boot_gen);
++    return 1;
++}
++
++void xbox_kernel_reboot_end(void)
++{
++    InterlockedIncrement(&g_xbox_boot_gen);
++    t_boot_gen = g_xbox_boot_gen;
++    t_guest_thread = 1;
++    t_dispatch_depth = 0;
++    g_kernel_dispatch_slot = -1;
++    g_is_spawned_thread = 0;
++    g_thread_stack_top = 0;
++    recomp_jmp_reset();
++    fprintf(stderr, "  [KERNEL] reboot: boot %ld starts\n", (long)g_xbox_boot_gen);
++}
+diff --git a/src/kernel/kernel_io.c b/src/kernel/kernel_io.c
+--- a/src/kernel/kernel_io.c
++++ b/src/kernel/kernel_io.c
+@@ -433,3 +433,10 @@ NTSTATUS __stdcall xbox_IoDeleteSymbolicLink(PXBOX_ANSI_STRING SymbolicLinkName)
+     entry->target[0] = '\0';
+     return STATUS_SUCCESS;
+ }
++
++/* A warm reboot (xbox_kernel_reboot_begin): links are the title's, made again
++ * as it starts. */
++void xbox_symlinks_reboot(void)
++{
++    memset(g_symlinks, 0, sizeof g_symlinks);
++}
+diff --git a/src/kernel/kernel_rtl.c b/src/kernel/kernel_rtl.c
+--- a/src/kernel/kernel_rtl.c
++++ b/src/kernel/kernel_rtl.c
+@@ -714,3 +714,31 @@ int __cdecl xbox_RtlVsprintf(char* buffer, const char* format, va_list argptr)
+ {
+     return vsprintf(buffer, format, argptr);
+ }
++
++/* A warm reboot (xbox_kernel_reboot_begin): the old boot's locks are
++ * forgotten. One no thread holds is free again (and initialised again when
++ * reused); one a parked thread of that boot still holds keeps its slot under
++ * a key no lock has, so nothing waits on it again. */
++void xbox_cs_table_reboot(void)
++{
++    int i;
++
++    AcquireSRWLockExclusive(&g_cs_table_lock);
++    for (i = 0; i < XBOX_CS_TABLE_SIZE; i++) {
++        XBOX_CS_SLOT* slot = &g_cs_table[i];
++        if (!slot->key)
++            continue;
++        if (TryEnterCriticalSection(&slot->cs)) {
++            LeaveCriticalSection(&slot->cs);
++            DeleteCriticalSection(&slot->cs);
++            slot->key = 0;
++            slot->owner_site = 0;
++            slot->owner_tid = 0;
++            slot->depth = 0;
++        } else {
++            slot->key = 1;
++        }
++    }
++    g_cs_table_full = 0;
++    ReleaseSRWLockExclusive(&g_cs_table_lock);
++}
+diff --git a/src/kernel/xbox_memory_layout.c b/src/kernel/xbox_memory_layout.c
+--- a/src/kernel/xbox_memory_layout.c
++++ b/src/kernel/xbox_memory_layout.c
+@@ -69,6 +69,9 @@ void xbox_SetMapSize(size_t bytes)
+  * underlying data. */
+ static HANDLE g_mapping_handle = NULL;
+ 
++/* xbox_MemoryLayoutReload is loading the image again into this mapping. */
++static int g_reload;
++
+ /* Mirror view pointers for cleanup */
+ static void *g_mirror_views[XBOX_NUM_MIRRORS] = {0};
+ 
+@@ -1733,10 +1736,12 @@ BOOL xbox_MemoryLayoutInit(const void *xbe_data, size_t xbe_size)
+     DWORD old_protect;
+     const uint8_t *xbe = (const uint8_t *)xbe_data;
+ 
+-    if (g_memory_base) {
++    if (g_memory_base && !g_reload) {
+         fprintf(stderr, "xbox_MemoryLayoutInit: already initialized\n");
+         return FALSE;
+     }
++    if (g_reload)
++        goto reload_image;      /* xbox_MemoryLayoutReload: mapped already */
+ 
+     /*
+      * Calculate the full range we need to map.
+@@ -1942,6 +1947,7 @@ BOOL xbox_MemoryLayoutInit(const void *xbe_data, size_t xbe_size)
+      */
+     #define XBOX_VA(va) ((void *)((uintptr_t)(va) + g_memory_offset))
+ 
++reload_image:
+     /*
+      * Copy XBE header to base address.
+      * The Xbox kernel maps the XBE image header at 0x00010000.
+@@ -2308,6 +2314,8 @@ BOOL xbox_MemoryLayoutInit(const void *xbe_data, size_t xbe_size)
+         #undef MEM32_INIT
+         #undef XBOX_VA
+     }
++    if (g_reload)
++        goto reload_done;       /* the windows below are mapped already */
+ 
+     /*
+      * Contiguous / physical memory window at 0x80000000.
+@@ -2736,6 +2744,7 @@ BOOL xbox_MemoryLayoutInit(const void *xbe_data, size_t xbe_size)
+     }
+ 
+     xbox_WatchInit();
++reload_done:
+     fprintf(stderr, "xbox_MemoryLayoutInit: complete\n");
+     return TRUE;
+ }
+@@ -3703,3 +3712,57 @@ HANDLE xbox_GetMappingHandle(void)
+ {
+     return g_mapping_handle;
+ }
++
++/* Load the image again into the mapping already made, as at start-up: RAM,
++ * the contiguous window and the heap's overflow area zeroed, every allocator
++ * empty, the sections, stack, TIB and TLS block as xbox_MemoryLayoutInit
++ * leaves them. For a warm reboot (xbox_kernel_reboot_begin in
++ * kernel_bridge.c, which keeps every other guest thread out meanwhile).
++ * The NV2A, MCPX and flash apertures keep their contents, as hardware
++ * registers would across a reboot.
++ *
++ * ponytail: RECOMP_EXT_VMA's tracker (guest_vmem.c) is not reset; a title
++ * using it would see the old boot's reservations. */
++BOOL xbox_MemoryLayoutReload(const void *xbe_data, size_t xbe_size)
++{
++    size_t lo = getenv("RECOMP_TRAP_NULL") ? 0x1000 : 0;
++    BOOL ok;
++
++    if (!g_memory_base)
++        return FALSE;
++    memset((uint8_t *)g_memory_base + lo, 0, g_memory_size - lo);
++    if (g_contig_memory)
++        memset(g_contig_memory, 0, XBOX_CONTIG_SIZE);
++
++    AcquireSRWLockExclusive(&g_heap_lock);
++    g_heap_block_count = 0;
++    g_heap_alloc_count = 0;
++    g_thread_stacks_used = 0;
++    memset(g_thread_stack_sizes, 0, sizeof g_thread_stack_sizes);
++    if (g_ovf_count) {
++        memset((void *)((uintptr_t)g_ovf_lo + g_memory_offset), 0, HEAP_OVF_SIZE);
++        g_ovf[0].addr = g_ovf_lo;
++        g_ovf[0].size = HEAP_OVF_SIZE;
++        g_ovf[0].free = 1;
++        g_ovf_count = 1;
++    }
++    ReleaseSRWLockExclusive(&g_heap_lock);
++
++    AcquireSRWLockExclusive(&g_contig_lock);
++    g_contig_next = XBOX_CONTIG_BASE + 0x1000u;
++    g_contig_block_count = 0;
++    ReleaseSRWLockExclusive(&g_contig_lock);
++    g_reserve_next = 0;
++
++    g_reload = 1;
++    ok = xbox_MemoryLayoutInit(xbe_data, xbe_size);
++    g_reload = 0;
++    return ok;
++}
++
++/* The calling thread's setjmp buffers belong to frames a warm reboot has
++ * unwound (xbox_kernel_reboot_end). */
++void recomp_jmp_reset(void)
++{
++    s_jmp_used = 0;
++}
+diff --git a/src/kernel/xbox_memory_layout.h b/src/kernel/xbox_memory_layout.h
+--- a/src/kernel/xbox_memory_layout.h
++++ b/src/kernel/xbox_memory_layout.h
+@@ -194,6 +194,10 @@ int xbox_Nv2aMirrorFence(uint32_t device_ptr_va,
+ 
+ void xbox_MemoryLayoutShutdown(void);
+ 
++/* Load the image again into the existing mapping, as at start-up, for a warm
++ * reboot; see xbox_kernel_reboot_begin in kernel.h. */
++BOOL xbox_MemoryLayoutReload(const void *xbe_data, size_t xbe_size);
++
+ /**
+  * Check if an address falls within the Xbox memory map.
+  */

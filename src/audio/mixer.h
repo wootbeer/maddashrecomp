@@ -65,6 +65,7 @@ void mdr_mixer_apply_output(void);
 
 int  mdr_voice_create(const mdr_voice_desc *desc);  /* returns id > 0, or 0 */
 void mdr_voice_destroy(int id);
+void mdr_mixer_drop_voices(void);   /* every voice, none reporting (a warm reboot) */
 
 /* All byte offsets and sizes are in the buffer's own format, as the game
  * sees them. */

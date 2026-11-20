@@ -471,3 +471,13 @@ void sub_0028F244(void)
 }
 
 
+
+/* A warm reboot (src/guest/guest.c): the device records were the old boot's;
+ * XInitDevices and XInputOpen make them again. The gamepads stay open. */
+void mdr_input_reboot(void)
+{
+    memset(packet, 0, sizeof packet);
+    memset(last, 0, sizeof last);
+    memset(records, 0, sizeof records);
+    init_ms = 0;
+}

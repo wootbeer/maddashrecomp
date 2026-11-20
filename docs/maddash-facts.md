@@ -147,9 +147,13 @@ default.xbe's (the only one recognised).
 
 - Mad Dash loads a level by relaunching its own default.xbe
   (XLaunchNewImage, launch data "lev..lod" with the level path, e.g.
-  `ruins/ruins`), as HalReturnToFirmware(2). `src/guest/relaunch.c` (from
-  Orta) restarts MadDashRecomp on it with `--launch-data`; the attract
-  demo (after the title sits idle) goes this way to `levels\ruins\`.
+  `ruins/ruins`), as HalReturnToFirmware(2). `src/guest/relaunch.c`
+  boots it again in place (patch 0047's warm reboot, `mdr_guest_reboot`):
+  the window, GPU device and sound output stay; memory, the kernel layer
+  and our D3D/DirectSound/input state start over; the old boot's threads
+  park. The attract demo (after the title sits idle) goes this way, to
+  `levels\oasis\oasis01.bgx` in the cloud run. `MDR_REBOOT_AT=frame,...`
+  reboots in place without launch data, as a test.
 
 ## Bink
 

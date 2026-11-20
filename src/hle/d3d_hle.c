@@ -394,6 +394,28 @@ void sub_002473A0(void)
             peek_guest();
         }
     }
+    {
+        /* MDR_REBOOT_AT=frame,...: boot the title again in place at those
+         * frames (counted from the first, across boots), with no launch
+         * data, as a fresh start would: a test of what a level load does. */
+        static const char *at;
+        static bool read;
+        if (!read) {
+            read = true;
+            at = getenv("MDR_REBOOT_AT");
+        }
+        for (const char *c = at; c && *c; ) {
+            char *end;
+            unsigned long long f = strtoull(c, &end, 10);
+            if (end == c)
+                break;
+            if (f == n) {
+                SDL_Log("d3d: MDR_REBOOT_AT: rebooting in place at frame %llu", (unsigned long long)n);
+                mdr_guest_reboot(NULL, 0);
+            }
+            c = *end == ',' ? end + 1 : end;
+        }
+    }
     g_eax = 0;
     g_esp += 4 + 16;
 }
@@ -2653,4 +2675,37 @@ void sub_002477D0(void)
     }
     g_eax = 0;
     g_esp += 4 + 12;
+}
+
+/* ── Warm reboot (src/guest/guest.c) ──────────────────────────────────────
+ * The title boots again in place: everything here that remembers a guest
+ * address or the library's state goes back to how it was at start-up. The
+ * programs found stay: they are kept by their words, not their address. */
+void mdr_d3d_reboot(void)
+{
+    vblank_data = 0;
+    pb_mark = 0;
+    memset(&nv, 0, sizeof nv);
+    nv_cull_enable = 1;
+    nv_cull_face = 0x405;
+    nv_const_slot = nv_const_word = nv_prog_slot = nv_prog_word = 0;
+    memset(backbuffers, 0, sizeof backbuffers);
+    nbackbuffers = 0;
+    memset(&cur_rt, 0, sizeof cur_rt);
+    cur_zformat = 0;
+    memset(vconst, 0, sizeof vconst);
+    memset(prog_mem, 0, sizeof prog_mem);
+    prog_start = 0;
+    prog_selected = false;
+    memset(psconst, 0, sizeof psconst);
+    memset(psconst_set, 0, sizeof psconst_set);
+    memset(latched_normal, 0, sizeof latched_normal);
+    nv_staged = false;
+    imm.active = false;
+    imm.n = 0;
+    immp.n = 0;
+    immp.set = 0;
+    memset(&st, 0, sizeof st);
+    for (int i = 0; i < TS_COUNT; i++)
+        ident(st.mat[i]);
 }

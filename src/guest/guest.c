@@ -4,11 +4,13 @@
 #include "config.h"
 
 #include "audio/mixer.h"
+#include "gfx/renderer.h"
 #include "kernel.h"
 #include "xbox_memory_layout.h"
 
 #include <SDL3/SDL.h>
 
+#include <setjmp.h>
 #include <stdlib.h>
 
 typedef void (*recomp_func_t)(void);
@@ -19,6 +21,8 @@ extern ptrdiff_t g_xbox_mem_offset;
 extern void mdr_crash_report_install(void);
 
 static bool mapped;
+static const void *s_xbe;           /* the image, kept for a warm reboot */
+static size_t s_xbe_size;
 
 /* ── Record of the game files the title opens ──────────────────────────
  * Every Xbox path the title asks for, once each, in first-use order. Lets a
@@ -123,6 +127,8 @@ bool mdr_guest_init(const void *xbe_data, size_t xbe_size,
         return false;
     }
     mapped = true;
+    s_xbe = xbe_data;
+    s_xbe_size = xbe_size;
     g_xbox_mem_offset = xbox_GetMemoryOffset();
     SDL_Log("guest: address space mapped, host offset 0x%llx",
             (unsigned long long)g_xbox_mem_offset);
@@ -195,4 +201,73 @@ void mdr_guest_shutdown(void)
         SDL_CloseIO(open_log);
         open_log = NULL;
     }
+}
+
+/* ── Warm reboot ──────────────────────────────────────────────────────────
+ * The title boots again in this process (relaunch.c): the thread running it
+ * unwinds to mdr_guest_run_boots and enters the title again, with the
+ * registers it started with the first time. */
+
+static jmp_buf s_boot_jmp;
+static SDL_ThreadID s_boot_thread;
+static mdr_guest_cpu s_boot_cpu;
+static uint32_t s_boot_entry;
+
+static void boot_registers(void)
+{
+    g_eax = s_boot_cpu.eax; g_ecx = s_boot_cpu.ecx; g_edx = s_boot_cpu.edx; g_ebx = s_boot_cpu.ebx;
+    g_esp = s_boot_cpu.esp; g_ebp = s_boot_cpu.ebp; g_esi = s_boot_cpu.esi; g_edi = s_boot_cpu.edi;
+    g_fs_base = s_boot_cpu.fs_base;
+}
+
+void mdr_guest_run_boots(const mdr_guest_cpu *cpu, uint32_t entry)
+{
+    s_boot_cpu = *cpu;
+    s_boot_entry = entry;
+    s_boot_thread = SDL_GetCurrentThreadID();
+    mdr_guest_cpu_load(cpu);
+    if (setjmp(s_boot_jmp))
+        boot_registers();               /* the guest CPU is held already */
+    mdr_guest_run(s_boot_entry);
+}
+
+extern void mdr_d3d_reboot(void);
+extern void mdr_dsound_reboot(void);
+extern void mdr_input_reboot(void);
+extern int  xbox_kernel_reboot_begin(void);
+extern void xbox_kernel_reboot_end(void);
+
+bool mdr_guest_reboot(const uint8_t *launch_page, size_t launch_bytes)
+{
+    uint32_t page;
+
+    if (!s_xbe || !xbox_kernel_reboot_begin())
+        return false;
+    /* Every other guest thread is out of guest code from here on. */
+    mdr_dsound_reboot();
+    mdr_d3d_reboot();
+    mdr_input_reboot();
+    mdr_gfx_forget_textures();
+    if (!xbox_MemoryLayoutReload(s_xbe, s_xbe_size)) {
+        SDL_Log("guest: the image could not be loaded again");
+        exit(1);
+    }
+    xbox_kernel_bridge_init();
+    page = xbox_HeapAlloc(4096, 4096);
+    if (page && launch_page) {
+        memcpy((void *)((uintptr_t)page + g_xbox_mem_offset), launch_page,
+               launch_bytes < 4096 ? launch_bytes : 4096);
+        memcpy((void *)((uintptr_t)(XBOX_KERNEL_DATA_BASE + KDATA_LAUNCH_DATA_PAGE) + g_xbox_mem_offset),
+               &page, 4);
+    }
+    xbox_kernel_reboot_end();
+    if (s_boot_thread && SDL_GetCurrentThreadID() == s_boot_thread)
+        longjmp(s_boot_jmp, 1);
+    /* Asked from another of the title's threads: this one runs the new boot
+     * (the first thread parks with the rest). */
+    boot_registers();
+    mdr_guest_run(s_boot_entry);
+    mdr_gfx_game_finished();
+    for (;;)
+        SDL_Delay(60000);
 }

@@ -289,8 +289,7 @@ static int SDLCALL game_thread(void *arg)
 {
     game_run *g = arg;
 
-    mdr_guest_cpu_load(&g->cpu);
-    mdr_guest_run(g->entry);
+    mdr_guest_run_boots(&g->cpu, g->entry);
     mdr_gfx_game_finished();
     return 0;
 }
