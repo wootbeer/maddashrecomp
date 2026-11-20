@@ -4,10 +4,10 @@ v0.0.1, bring-up. The repository was set up from Orta Recomp (v0.1.15):
 launcher, game-file picker (ISO or folder), F1 menu, settings, renderer,
 mixer, crash reports, Android project and the 43 xboxrecomp patches, renamed
 for Mad Dash (`MadDashRecomp`, `maddashrecomp.ini`, `MDR_*`, `mdr_*`). The
-game recompiles, builds, opens its window, loads its front-end world, plays
-the logo movies with sound and runs its title at 59.94 fps (no picture
-yet: no draw hooks); left idle it relaunches itself into the attract demo
-(`relaunch.c`). Facts about the game and the boots so far:
+game recompiles, builds, plays its logo movies with sound and shows its
+title screen and main menu as on the console (cloud screenshots); left
+idle it relaunches itself into the attract demo (`relaunch.c`). No input
+yet. Facts about the game and the boots so far:
 `docs/maddash-facts.md`.
 
 ## How it fits together
@@ -27,9 +27,12 @@ yet: no draw hooks); left idle it relaunches itself into the attract demo
   (BlockUntilVerticalBlank, vblank callback), CreateDevice (our window),
   Clear, Present (3925's end of frame; no Swap), KickOff, BlockOnTime;
   per-call tracing (`MDR_D3D_TRACE`, hooks in `d3d_calltrace.c` from
-  `tools/gen_d3d_calltrace.py --symbols build/xdk_symbols.txt`); the push
-  buffer reader for the vertex arrays and texture stages the game writes
-  itself (`pb_catch_up`, `MDR_PB_TRACE=frame`), not yet drawn.
+  `tools/gen_d3d_calltrace.py --symbols build/xdk_symbols.txt`); the draw
+  path (Orta's, fed from Mad Dash's sources): a push-buffer reader
+  (`pb_catch_up`) for what the game writes as NV2A methods itself (vertex
+  arrays, texture stages, simple render states, culling), vertex programs
+  from Load/SelectVertexShader's program memory, Begin/End through the
+  program, `MDR_PB_TRACE=first-last`.
 - `src/hle/dsound_hle.c`: DirectSound on our mixer, re-addressed from
   Orta's for DSOUND 3936 (mix-bin masks, light HRTF).
 - `src/guest/stream_wait.c`: the file stream's consumer yields the guest
@@ -48,13 +51,10 @@ yet: no draw hooks); left idle it relaunches itself into the attract demo
 
 ## Next
 
-1. Draws: feed the renderer from the reader's arrays and textures (formats
-   as the NV2A's: Orta's `xtex.c` reads the texture format word), the
-   vertex programs Load/SelectVertexShader put in program memory (Orta's
-   `vsh.c` parses the token stream), SetVertexShaderConstant, the pixel
-   shader definitions of SetPixelShaderProgram, the render-state table at
-   0x0024BE88 (indices from 3925's setters), Begin/End (Orta's
-   immediate mode). The title frame is in `docs/maddash-facts.md`.
+1. Bink: the movies decode with isolated wrong 8x8 blocks that spread
+   over later frames (no UNIMPL reached; the MMX primitives Bink uses look
+   right): a mis-lifted instruction in a rarer block path. Bink needs MMX
+   (with cpuid reporting none it picks nothing).
 2. Input (XInputGetState 0x0028F244 and friends), from `src/hle/orta/`.
 3. Boot further (the cloud has a front-end subset of `media/`, uploaded by
    the owner; music `.str` files are not on the owner's listing), keep

@@ -211,3 +211,16 @@ default.xbe's (the only one recognised).
   (u/v/p wrap modes, 1 = wrap), CONTROL0/1 (enable, pitch << 16 for
   linear), FILTER (min bits 16-23, mag 24-27: 1 nearest, 2 linear, 3-6
   with mips), IMAGE_RECT (w << 16 | h, linear textures).
+
+## Drawing (what the port found)
+
+- Besides vertex arrays and textures, the display list writes the simple
+  render states itself (opcode 5: nine methods from 0x033C, blend and
+  alpha; 0x0300/0x0304 enables) and culling (0x308/0x39C/0x3A0) is changed
+  through methods too; the reader maps them back into D3D's table.
+- Movies: an immediate-mode quad (Begin/End, QUADLIST, through a 4-
+  instruction program loaded each frame at the next 4 slots of program
+  memory) with the Bink frame as a linear X8R8G8B8 640 x 480 texture set
+  through SetTexture.
+- Title and menu: about 80 draws a frame; the logo is a swizzled
+  A8R8G8B8 512 x 256 texture (format 0x0891062A).
