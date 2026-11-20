@@ -228,3 +228,26 @@ default.xbe's (the only one recognised).
   through SetTexture.
 - Title and menu: about 80 draws a frame; the logo is a swizzled
   A8R8G8B8 512 x 256 texture (format 0x0891062A).
+
+## Characters (skinning)
+
+- The characters' vertex program (27 instructions) blends two bones a
+  vertex: v3 is PBYTE4 (bone A, bone B, weight, 0), each bone's first
+  constant row v3 * c191.w (256) through ARL, its matrix c[a0..a0+2], the
+  view-projection in c185-c188. It owns the whole 192-constant file:
+  bones run through c[57-59], where the XDK's compiled programs keep the
+  viewport transform. Writing the viewport there for every program sent
+  bone 20's vertices millions of units off ("tethers"); it is now written
+  only for programs that read c58/c59 directly (d3d_hle.c reads_viewport).
+- The game records part of each frame into push buffers (Begin/
+  EndPushBuffer 0x002466B0/0x00246960; the ring cursor saved at
+  dev+0x400) and the ring wraps with a jump (MakeSpace 0x00240810):
+  pb_catch_up reads across both.
+
+## Sound mixing
+
+- 3D voices (buffers and DSSTREAMCAPS_CTRL3D streams: the ambience and
+  most effects) get mixbins 6-9 (XTLK_FL/FR/BL/BR) and 10 (I3DL2); the
+  mixer takes 6-9 as the corner speakers. Mono 2D voices default to all
+  six speakers (0x0028BF68); on stereo output a voice with both front bins
+  plays from those only.

@@ -62,9 +62,11 @@ window (`relaunch.c`, `mdr_guest_reboot`, patch 0047). Facts about the game and 
    over later frames (no UNIMPL reached; the MMX primitives Bink uses look
    right): a mis-lifted instruction in a rarer block path. Bink needs MMX
    (with cpuid reporting none it picks nothing).
-2. A race: the levels are separate relaunches (`maddash-facts.md`); the
-   cloud subset has no level files beyond the front end. Testing races
-   needs a level .bgx (e.g. `levels\ruins\`) or the Windows build.
+2. Races play on Windows (Tiki Village): in-place level loads, sound
+   effects (3D voices on the crosstalk mixbins), characters (no more
+   tethers), 60 fps. Open there: music cut-outs (recheck now that the
+   shaders run on the GPU; `MDR_DSOUND_TRACE=1` logs Process), the menus'
+   ambience against the music, Frame gen. ghosting on characters.
 3. Boot further (the cloud has a front-end subset of `media/`, uploaded by
    the owner; music `.str` files are not on the owner's listing), keep
    collecting `[ICALL] Failed`
