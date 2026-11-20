@@ -176,3 +176,38 @@ default.xbe's (the only one recognised).
   5), at physical offsets; texture stages 0-2, e.g. offset 0x00BD9480,
   format 0x07780C2A (2D, colour format 0x0C DXT, 8 levels, 128 x 128),
   address 0x00010101, filter 0x02063F01.
+
+## Direct3D 3925 numbering and shadows (for the draw port)
+
+- Render states (`D3D_g_RenderState` 0x0024BE88, `SetRenderStateNotInline`
+  0x0023C2A0): simple 0-81, written as the NV2A method in the table at
+  0x002A29A8 (full headers, 0x0004xxxx); deferred 82-115 (dirty bits from
+  0x00247CB0 into the device's +8); complex 116 on, by setter (table
+  0x00247BB8).
+  - 57-81 as Orta's 4928 enum: ZFUNC 57 (0x354), ALPHAFUNC 58, ALPHABLEND
+    59, ALPHATEST 60, ALPHAREF 61, SRCBLEND 62, DESTBLEND 63, ZWRITE 64,
+    DITHER 65, SHADEMODE 66, COLORWRITE 67, STENCILZFAIL 68, STENCILPASS 69,
+    STENCILFUNC 70, STENCILREF 71, STENCILMASK 72, STENCILWRITEMASK 73,
+    BLENDOP 74, BLENDCOLOR 75, SWATHWIDTH 76, POLYOFFSET slope 77 / offset
+    78, POINT/WIREFRAME/SOLID OFFSET ENABLE 79/80/81. 0-56: the pixel
+    shader registers, as in Orta.
+  - Deferred = Orta's minus 10 (checked: FOGENABLE 82; LazySetPointParams
+    reads POINTSIZE..POINTSIZE_MAX at 106-113): LIGHTING 92, COLORVERTEX
+    95, material sources 100-103, AMBIENT 105.
+  - Complex, from the setters' stores: PSTEXTUREMODES 116, VERTEXBLEND 117,
+    FOGCOLOR 118, FILLMODE 119, BACKFILLMODE 120, TWOSIDEDLIGHTING 121,
+    NORMALIZENORMALS 122, ZENABLE 123, STENCILENABLE 124, STENCILFAIL 125,
+    FRONTFACE 126, CULLMODE 127, TEXTUREFACTOR 128, ZBIAS 129, LOGICOP 130,
+    EDGEANTIALIAS 131, MULTISAMPLEANTIALIAS 132, MULTISAMPLEMASK 133,
+    MULTISAMPLETYPE 134, SHADOWFUNC 135, LINEWIDTH 136, DXT1NOISE 137, YUV
+    138, OCCLUSIONCULL 139, STENCILCULL 140.
+- SetVertexShaderConstant(Register, pData, Count), stdcall `ret 0xc`:
+  NV2A slot = Register + 96; unless the device is pure (bit 0x10 of the
+  device's +0xC, from CreateDevice's BehaviorFlags) the library copies the
+  constants to the device at +0xCC0 + 16 * slot (0x00249B50 + 16 * slot),
+  then writes them to the push buffer (method 0x0B80).
+- Texture state read from the push buffer is the NV2A's: OFFSET (physical),
+  FORMAT (the D3D resource's format word: Orta's xtex reads it), ADDRESS
+  (u/v/p wrap modes, 1 = wrap), CONTROL0/1 (enable, pitch << 16 for
+  linear), FILTER (min bits 16-23, mag 24-27: 1 nearest, 2 linear, 3-6
+  with mips), IMAGE_RECT (w << 16 | h, linear textures).
