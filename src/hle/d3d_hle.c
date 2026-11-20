@@ -430,3 +430,142 @@ void sub_00240720(void)
 {
     g_esp += 4 + 8;
 }
+
+/* Tracing hook for the generated entry hooks in d3d_calltrace.c.
+ * MDR_D3D_TRACE=first-last logs every Direct3D call made during those frames
+ * (MDR_D3D_TRACE=1 means frames 0-2): name, stack arguments, ecx and edx
+ * (some XDK functions are __fastcall). */
+void d3d_trace_call(uint32_t va, const char *name, int args)
+{
+    static int parsed;
+    static uint64_t first, last;
+    uint64_t frame;
+    char line[512];
+    int len;
+
+    if (!parsed) {
+        const char *v = getenv("MDR_D3D_TRACE");
+        parsed = 1;
+        if (v && *v && *v != '0') {
+            parsed = 2;
+            first = 0, last = 2;
+            if (strchr(v, '-'))
+                first = strtoull(v, NULL, 10), last = strtoull(strchr(v, '-') + 1, NULL, 10);
+        }
+    }
+    if (parsed != 2)
+        return;
+    frame = mdr_gfx_frame_count();
+    if (frame < first || frame > last)
+        return;
+    len = snprintf(line, sizeof line, "d3d %llu: %s(", (unsigned long long)frame, name);
+    for (int i = 0; i < args && len < (int)sizeof line - 16; i++)
+        len += snprintf(line + len, sizeof line - (size_t)len, "%s0x%x", i ? ", " : "", MEM32(g_esp + 4 + 4 * i));
+    snprintf(line + len, sizeof line - (size_t)len, ") ecx=0x%x edx=0x%x [0x%08x] from 0x%08x", g_ecx, g_edx, va,
+             MEM32(g_esp));
+    SDL_Log("%s", line);
+}
+
+/* ── The GPU state the game writes itself ─────────────────────────────────
+ * Mad Dash's display-list player (0x001ECBA0) writes the vertex arrays and
+ * texture stages as NV2A methods into the push buffer, through the device's
+ * cursor, and calls D3D only for the draw: no SetStreamSource or SetTexture
+ * reaches us. So at each draw the methods written since the last one (by
+ * the game or by D3D) are read for those two groups alone; everything else
+ * is still taken at the API. The frame is recorded into a push buffer of
+ * its own (BeginPushBuffer each frame, 0x001E7B10/0x001E7BA0), so the
+ * stream is read where it is written, never executed. */
+
+static uint32_t pb_mark;          /* guest address read up to */
+
+static struct {
+    uint32_t va_offset[16], va_format[16];  /* NV097_SET_VERTEX_DATA_ARRAY_OFFSET/FORMAT */
+    uint32_t tex[4][16];                    /* NV097_SET_TEXTURE_* by stage, 0x1B00 + 64 s + 4 k */
+} nv;
+
+static void nv_method(uint32_t m, uint32_t v)
+{
+    if (m >= 0x1720 && m < 0x1760)
+        nv.va_offset[(m - 0x1720) / 4] = v;
+    else if (m >= 0x1760 && m < 0x17A0)
+        nv.va_format[(m - 0x1760) / 4] = v;
+    else if (m >= 0x1B00 && m < 0x1C00)
+        nv.tex[(m - 0x1B00) / 64][((m - 0x1B00) % 64) / 4] = v;
+}
+
+/* Read the methods from pb_mark to the cursor. A jump or call in the
+ * stream, or a cursor that moved somewhere else, ends the read there. */
+static void pb_catch_up(void)
+{
+    uint32_t dev = MEM32(D3D_DEVICE_PTR), cur, p;
+
+    if (!dev)
+        return;
+    cur = MEM32(dev);
+    p = pb_mark;
+    if (!p || cur < p || cur - p > 0x400000u) {
+        pb_mark = cur;
+        return;
+    }
+    while (p < cur) {
+        uint32_t h = MEM32(p), m, n;
+        p += 4;
+        if ((h & 3) || (h & 0xE0000000u) == 0x20000000u)
+            break;                          /* jump or call */
+        m = h & 0x1FFCu;
+        n = (h >> 18) & 0x7FFu;
+        if (p + 4 * n > cur)
+            break;
+        for (uint32_t k = 0; k < n; k++)
+            nv_method((h & 0x40000000u) ? m : m + 4 * k, MEM32(p + 4 * k));
+        p += 4 * n;
+    }
+    pb_mark = cur;
+}
+
+/* MDR_PB_TRACE=frame: the arrays and texture stages at each draw of it. */
+static void pb_trace_draw(const char *what, uint32_t type, uint32_t count)
+{
+    static long long frame = -2;
+    char line[512];
+    int len;
+
+    if (frame == -2)
+        frame = getenv("MDR_PB_TRACE") ? atoll(getenv("MDR_PB_TRACE")) : -1;
+    if (frame < 0 || mdr_gfx_frame_count() != (uint64_t)frame)
+        return;
+    len = SDL_snprintf(line, sizeof line, "pb: %s type %u count %u; arrays", what, type, count);
+    for (int i = 0; i < 16 && len < 400; i++)
+        if ((nv.va_format[i] >> 4) & 0xF)
+            len += SDL_snprintf(line + len, sizeof line - (size_t)len, " %d:%08x@%08x", i, nv.va_format[i],
+                                nv.va_offset[i]);
+    SDL_Log("%s", line);
+    for (int s = 0; s < 4; s++)
+        if (nv.tex[s][0] || nv.tex[s][1])
+            SDL_Log("pb:   tex %d offset %08x format %08x address %08x ctl0 %08x ctl1 %08x filter %08x rect %08x",
+                    s, nv.tex[s][0], nv.tex[s][1], nv.tex[s][2], nv.tex[s][3], nv.tex[s][4], nv.tex[s][5],
+                    nv.tex[s][7]);
+}
+
+/* D3DDevice_BeginPushBuffer(pPushBuffer): `ret 4`. The cursor moves to the
+ * buffer's data: read from there. */
+extern void sub_002466B0_gen(void);
+void sub_002466B0(void)
+{
+    sub_002466B0_gen();
+    pb_mark = MEM32(MEM32(D3D_DEVICE_PTR));
+}
+
+/* D3DDevice_DrawIndexedVertices(PrimitiveType, VertexCount, pIndexData): `ret 0xc` */
+void sub_002477D0_enter(void)
+{
+    pb_catch_up();
+    pb_trace_draw("DrawIndexedVertices", MEM32(g_esp + 4), MEM32(g_esp + 8));
+}
+
+/* D3DDevice_DrawVertices(PrimitiveType, StartVertex, VertexCount): `ret 0xc` */
+void sub_00247730_enter(void)
+{
+    pb_catch_up();
+    pb_trace_draw("DrawVertices", MEM32(g_esp + 4), MEM32(g_esp + 12));
+}

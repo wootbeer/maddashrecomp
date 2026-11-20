@@ -25,7 +25,11 @@ yet: no draw hooks); left idle it relaunches itself into the attract demo
 - `src/hle/d3d_hle.c`: Mad Dash's Direct3D hooks, re-addressed from
   XbSymbolDatabase names and checked in its code: frame clock
   (BlockUntilVerticalBlank, vblank callback), CreateDevice (our window),
-  Clear, Present (3925's end of frame; no Swap), KickOff, BlockOnTime.
+  Clear, Present (3925's end of frame; no Swap), KickOff, BlockOnTime;
+  per-call tracing (`MDR_D3D_TRACE`, hooks in `d3d_calltrace.c` from
+  `tools/gen_d3d_calltrace.py --symbols build/xdk_symbols.txt`); the push
+  buffer reader for the vertex arrays and texture stages the game writes
+  itself (`pb_catch_up`, `MDR_PB_TRACE=frame`), not yet drawn.
 - `src/hle/dsound_hle.c`: DirectSound on our mixer, re-addressed from
   Orta's for DSOUND 3936 (mix-bin masks, light HRTF).
 - `src/guest/stream_wait.c`: the file stream's consumer yields the guest
@@ -44,16 +48,13 @@ yet: no draw hooks); left idle it relaunches itself into the attract demo
 
 ## Next
 
-1. Draws. Mad Dash's display-list player writes NV2A methods itself
-   (vertex arrays, texture stages: `docs/maddash-facts.md`), so Orta's
-   API-level capture alone sees no vertex streams. Plan: at each D3D draw
-   hook, read the methods the game wrote since the last D3D call (from
-   the last hook's cursor to the device's cursor, 0x00248E90) for those
-   few methods only, into the draw state; then port Orta's draw path
-   (SetTexture, SetVertexShaderConstant, CreateVertexShader,
-   SetPixelShader, Draw(Indexed)Vertices, Begin/End, render states from
-   0x0024BE88). A narrow reader of the game's own writes, not an NV2A
-   emulator.
+1. Draws: feed the renderer from the reader's arrays and textures (formats
+   as the NV2A's: Orta's `xtex.c` reads the texture format word), the
+   vertex programs Load/SelectVertexShader put in program memory (Orta's
+   `vsh.c` parses the token stream), SetVertexShaderConstant, the pixel
+   shader definitions of SetPixelShaderProgram, the render-state table at
+   0x0024BE88 (indices from 3925's setters), Begin/End (Orta's
+   immediate mode). The title frame is in `docs/maddash-facts.md`.
 2. Input (XInputGetState 0x0028F244 and friends), from `src/hle/orta/`.
 3. Boot further (the cloud has a front-end subset of `media/`, uploaded by
    the owner; music `.str` files are not on the owner's listing), keep

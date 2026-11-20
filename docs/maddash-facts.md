@@ -158,3 +158,21 @@ default.xbe's (the only one recognised).
   into 0x0031541C; with the three as lifter no-ops it was left null and
   called a million times. Patch 0046 lifts them (cpuid answers as the
   Xbox's Pentium III): no null calls since.
+
+## A title-screen frame (frame 1400, `MDR_D3D_TRACE`, `MDR_PB_TRACE`)
+
+- 459 D3D calls: 76 DrawIndexedVertices (triangle strips 6 and lists 5,
+  16-bit indices in the model data), 3 Begin/End batches (56 vertices of
+  SetVertexData2f/4f/Color each), 110 SetVertexShaderConstant, 9
+  LoadVertexShaderProgram + SelectVertexShader (programs loaded into
+  program memory by address, from tables in .text such as 0x001F38B0; not
+  CreateVertexShader handles), 7 SetPixelShaderProgram (+SetPixelShader
+  0x002492F4), one SetVertexShaderInput, render states through
+  SetRenderState_Simple/Deferred/CullMode/Stencil*, SetScissors. No
+  SetTexture and no SetStreamSource.
+- What the display-list player writes, read at each draw: vertex arrays,
+  e.g. attribute 0 format 0xE35 (stride 14, 3 x NV2A type 5, 16-bit
+  integers), 1: 0xE40 (4 bytes, type 0, a D3DCOLOR), 2: 0xE25 (2 x type
+  5), at physical offsets; texture stages 0-2, e.g. offset 0x00BD9480,
+  format 0x07780C2A (2D, colour format 0x0C DXT, 8 levels, 128 x 128),
+  address 0x00010101, filter 0x02063F01.
