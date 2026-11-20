@@ -837,7 +837,7 @@ static void frame(float x0, float y0, float w, float h, const char *page_name)
     COLOR(COL_ACCENT);
     fill(x0, y0 + 2.5f, w, 0.25f);
     COLOR(COL_TITLE_TX);
-    text(x0 + 1.5f, y0 + 0.75f, "ORTA RECOMP");
+    text(x0 + 1.5f, y0 + 0.75f, "MAD DASH RECOMP");
     text(x0 + w - 1.5f - (float)strlen(page_name), y0 + 0.75f, page_name);
 }
 
