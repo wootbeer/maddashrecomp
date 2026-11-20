@@ -509,9 +509,35 @@ static void nv_render_state(uint32_t m, uint32_t v)
         MEM32(0x0024BE88u + 4u * state_of[m / 4]) = v;
 }
 
+/* Culling as the NV2A has it (what SetRenderState_CullMode, 0x0023C3E0,
+ * writes): CULL_FACE_ENABLE 0x308, CULL_FACE 0x39C (0x404 front, 0x405
+ * back), FRONT_FACE 0x3A0 (0x900 CW, 0x901 CCW). Back into D3D's
+ * CULLMODE (127: the winding culled, 0 for none) and FRONTFACE (126), for
+ * whoever wrote them, the game or the library. */
+static uint32_t nv_cull_enable = 1, nv_cull_face = 0x405;
+
+static void nv_cull(uint32_t m, uint32_t v)
+{
+    uint32_t front;
+
+    if (m == 0x308)
+        nv_cull_enable = v;
+    else if (m == 0x39C)
+        nv_cull_face = v;
+    else
+        MEM32(0x0024BE88u + 4u * 126) = v;          /* FRONTFACE */
+    front = MEM32(0x0024BE88u + 4u * 126);
+    if (front != 0x900 && front != 0x901)
+        front = 0x900;
+    MEM32(0x0024BE88u + 4u * 127) = !nv_cull_enable ? 0
+        : nv_cull_face == 0x404 ? front : (front ^ 1);   /* the winding culled */
+}
+
 static void nv_method(uint32_t m, uint32_t v)
 {
-    if (m >= 0x0300 && m < 0x0A00)
+    if (m == 0x308 || m == 0x39C || m == 0x3A0)
+        nv_cull(m, v);
+    else if (m >= 0x0300 && m < 0x0A00)
         nv_render_state(m, v);
     else if (m >= 0x1720 && m < 0x1760)
         nv.va_offset[(m - 0x1720) / 4] = v;
@@ -1532,10 +1558,16 @@ static uint32_t pack_color(const float *c)
     return (r[3] << 24) | (r[0] << 16) | (r[1] << 8) | r[2];
 }
 
-/* Array r's CPU address (its offset is physical), or 0. */
+/* Array r's CPU address (its offset is physical: the contiguous alias at
+ * 0x80000000), or 0. Begin/End's staged arrays (in the guest heap, not in
+ * that alias) are used as they are, while nv_staged is set. */
+static bool nv_staged;
+
 static uint32_t nv_array_base(int r)
 {
-    return ((nv.va_format[r] >> 4) & 0xF) && nv.va_offset[r] ? (nv.va_offset[r] & 0x03FFFFFFu) | 0x80000000u : 0;
+    if (!((nv.va_format[r] >> 4) & 0xF) || !nv.va_offset[r])
+        return 0;
+    return nv_staged ? nv.va_offset[r] : (nv.va_offset[r] & 0x03FFFFFFu) | 0x80000000u;
 }
 
 /* Run the current vertex program over vertices [first, first + count).
@@ -2332,6 +2364,28 @@ void sub_00247B70(void)
         static long long f = -2;
         if (f == -2)
             f = atoll(getenv("MDR_PB_TRACE"));
+        if (mdr_gfx_frame_count() == (uint64_t)f) {
+            mdr_vsh_program *tp = current_program();
+            for (uint32_t k = prog_start; k < PROG_SLOTS && k < prog_start + 8; k++) {
+                SDL_Log("pb:     prog[%u] %08x %08x %08x %08x", k, prog_mem[k][0], prog_mem[k][1], prog_mem[k][2],
+                        prog_mem[k][3]);
+                if (prog_mem[k][3] & 1)
+                    break;
+            }
+            if (tp) {
+                float in[MDR_VSH_INPUTS][4] = { { 0 } }, o[VSH_OUTPUTS][4], sc[3], of[3], zs;
+                vsh_constants(sc, of, &zs);
+                for (int r = 0; r < 16 && r < MDR_VSH_INPUTS; r++)
+                    memcpy(in[r], immp.v + r * 4, sizeof in[r]);
+                mdr_vsh_trace = true;
+                mdr_vsh_run(tp, (const float (*)[4])in, vconst, o);
+                mdr_vsh_trace = false;
+                SDL_Log("pb:     v0 out oPos %g %g %g %g tex0 %g %g", o[VSH_OPOS][0], o[VSH_OPOS][1], o[VSH_OPOS][2],
+                        o[VSH_OPOS][3], o[VSH_OT0][0], o[VSH_OT0][1]);
+            } else {
+                SDL_Log("pb:     no program (selected %d start %u)", prog_selected, prog_start);
+            }
+        }
         if (mdr_gfx_frame_count() == (uint64_t)f)
             for (uint32_t i = 0; i < immp.n && i < 4; i++)
                 for (int r = 0; r < 16; r++)
@@ -2357,9 +2411,11 @@ void sub_00247B70(void)
             for (int r = 0; r < 16; r++) {
                 /* FLOAT4 (0x42) at stride 256: the NV2A's format word */
                 nv.va_format[r] = (immp.set & (1u << r)) ? (256u << 8) | 0x42u : 0;
-                nv.va_offset[r] = (stage & 0x03FFFFFFu) + 16u * (uint32_t)r;
+                nv.va_offset[r] = stage + 16u * (uint32_t)r;
             }
+            nv_staged = true;
             submit(imm.type, nv_array_base(0), 256, 0, immp.n, sequential(immp.n), immp.n);
+            nv_staged = false;
             memcpy(nv.va_offset, saved_off, sizeof saved_off);
             memcpy(nv.va_format, saved_fmt, sizeof saved_fmt);
         }
