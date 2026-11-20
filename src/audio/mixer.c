@@ -235,6 +235,17 @@ static float side_gain(const voice *v, uint32_t bin)
  * DirectSound's per-bin volumes (0x002C6E40) give the I3DL2 bin the voice's
  * distance attenuation plus its I3DL2 room level. (The room path's own
  * extra rolloff, flRoomRolloffFactor, is 0 wherever Orta sets it.) */
+/* DirectSound 3936 sends a 3D voice to the crosstalk mixbins, XTLK_FL,
+ * XTLK_FR, XTLK_BL, XTLK_BR (6-9), which the DSP's crosstalk stage puts on
+ * the four corner speakers. Taken here as those speakers. Unmixed, every 3D
+ * sound of Mad Dash's (most of its effects) was heard only in the reverb. */
+static uint32_t speaker_of(uint32_t bin)
+{
+    static const uint8_t corner[4] = { MDR_BIN_FRONT_LEFT, MDR_BIN_FRONT_RIGHT,
+                                       MDR_BIN_BACK_LEFT, MDR_BIN_BACK_RIGHT };
+    return bin >= 6 && bin <= 9 ? corner[bin - 6] : bin;
+}
+
 static void update_gains(voice *v)
 {
     bool sends = false, fronts = false;
@@ -247,15 +258,15 @@ static void update_gains(voice *v)
      * side as well put the same signal in three times, 7.7 dB over a stereo
      * voice at the same level (the menus' water over their music). */
     for (int i = 0; i < v->desc.bin_count; i++) {
-        fl |= v->desc.bins[i].bin == MDR_BIN_FRONT_LEFT;
-        fr |= v->desc.bins[i].bin == MDR_BIN_FRONT_RIGHT;
+        fl |= speaker_of(v->desc.bins[i].bin) == MDR_BIN_FRONT_LEFT;
+        fr |= speaker_of(v->desc.bins[i].bin) == MDR_BIN_FRONT_RIGHT;
     }
     fronts = out_channels == 2 && fl && fr && !v->pan6;
 
     memset(v->gain, 0, sizeof v->gain);
     for (int i = 0; i < v->desc.bin_count; i++) {
         int ch = v->desc.channels == 1 ? 0 : i % v->desc.channels;
-        uint32_t bin = v->desc.bins[i].bin;
+        uint32_t bin = speaker_of(v->desc.bins[i].bin);
         if (bin < MDR_BIN_SPEAKERS && v->pan6) {
             /* 5.1: the loudest speaker bin's level, spread over the
              * corners by where the voice is (a stereo voice's two channels

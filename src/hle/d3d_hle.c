@@ -1726,6 +1726,41 @@ static void vsh_unpack(const vsh_job *j, uint32_t i, float in[MDR_VSH_INPUTS][4]
             SDL_UnlockMutex(mx);
         }
     }
+    if (i == 0 && mdr_gfx_capturing()) {
+        /* A capture: for a program that reads constants through a0 (the
+         * characters' skinning), the constant rows that are all zero and the
+         * first vertex's inputs and instruction trace. */
+        bool rel = false;
+        for (uint32_t k = 0; k < p->count; k++)
+            rel |= p->op[k].rel != 0;
+        if (rel) {
+            static SDL_Mutex *mx;
+            char zero[512];
+            int len = 0;
+            float o2[VSH_OUTPUTS][4];
+            if (!mx) mx = SDL_CreateMutex();
+            SDL_LockMutex(mx);
+            for (int c = 0; c < MDR_VSH_CONSTANTS && len < (int)sizeof zero - 16; ) {
+                int e = c;
+                while (e < MDR_VSH_CONSTANTS && !vconst[e][0] && !vconst[e][1] && !vconst[e][2] && !vconst[e][3])
+                    e++;
+                if (e > c)
+                    len += SDL_snprintf(zero + len, sizeof zero - (size_t)len, " %d-%d", c, e - 1);
+                c = e + 1;
+            }
+            zero[len] = 0;
+            SDL_Log("capture:     a0 program 0x%08x (%u insns), %u vertices; zero constants:%s", j->handle,
+                    p->count, 0u, len ? zero : " none");
+            for (int r = 0; r < MDR_VSH_INPUTS; r++)
+                if (p->inputs_read & (1u << r))
+                    SDL_Log("capture:     a0 v%d type 0x%02x stream %u +%u = %g %g %g %g", r, p->input[r].type,
+                            p->input[r].stream, p->input[r].offset, in[r][0], in[r][1], in[r][2], in[r][3]);
+            mdr_vsh_trace = true;
+            mdr_vsh_run(p, (const float (*)[4])in, vconst, o2);
+            mdr_vsh_trace = false;
+            SDL_UnlockMutex(mx);
+        }
+    }
     v->pos[0] = (o[VSH_OPOS][0] - j->offset[0]) / j->scale[0] * cw;
     v->pos[1] = (o[VSH_OPOS][1] - j->offset[1]) / j->scale[1] * cw;
     v->pos[2] = (o[VSH_OPOS][2] - j->offset[2]) / j->zs * cw;
