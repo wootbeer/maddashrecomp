@@ -104,6 +104,20 @@ bool mdr_guest_init(const void *xbe_data, size_t xbe_size,
 #endif
     }
 
+    /* Asynchronous file handles answer STATUS_PENDING, as on the console;
+     * the data is still read at once. Mad Dash copies a race's AI lines
+     * (.dem) from the disc to the cache partition with overlapped reads,
+     * and with every read finishing synchronously its copy came out in the
+     * wrong order: the race then parsed garbage and printed warnings for
+     * good. (xboxrecomp only asks whether the variable is set.) */
+    if (!getenv("RECOMP_ASYNC_IO")) {
+#ifdef _WIN32
+        _putenv_s("RECOMP_ASYNC_IO", "1");
+#else
+        setenv("RECOMP_ASYNC_IO", "1", 1);
+#endif
+    }
+
     if (!xbox_MemoryLayoutInit(xbe_data, xbe_size)) {
         SDL_Log("guest: could not map the Xbox address space");
         return false;

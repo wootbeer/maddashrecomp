@@ -533,9 +533,30 @@ static void nv_cull(uint32_t m, uint32_t v)
         : nv_cull_face == 0x404 ? front : (front ^ 1);   /* the winding culled */
 }
 
+/* Vertex-shader constants and programs as the NV2A takes them, whoever
+ * wrote them (SetVertexShaderConstant, LoadVertexShaderProgram, or the
+ * game's own methods): SET_TRANSFORM_CONSTANT_LOAD 0x1EA4 picks a slot,
+ * SET_TRANSFORM_CONSTANT 0x0B80-0x0BFC streams words into it and the next;
+ * SET_TRANSFORM_PROGRAM_LOAD 0x1E9C and SET_TRANSFORM_PROGRAM 0x0B00-0x0B7C
+ * likewise for program memory. Constants go to the library's copy that the
+ * draws read (VSH_SHADOW), programs to prog_mem. */
+static uint32_t nv_const_slot, nv_const_word, nv_prog_slot, nv_prog_word;
+static void nv_constant_word(uint32_t v);
+static void nv_program_word(uint32_t v);
+
 static void nv_method(uint32_t m, uint32_t v)
 {
-    if (m == 0x308 || m == 0x39C || m == 0x3A0)
+    if (m == 0x1EA4) {
+        nv_const_slot = v;
+        nv_const_word = 0;
+    } else if (m >= 0x0B80 && m < 0x0C00) {
+        nv_constant_word(v);
+    } else if (m == 0x1E9C) {
+        nv_prog_slot = v;
+        nv_prog_word = 0;
+    } else if (m >= 0x0B00 && m < 0x0B80) {
+        nv_program_word(v);
+    } else if (m == 0x308 || m == 0x39C || m == 0x3A0)
         nv_cull(m, v);
     else if (m >= 0x0300 && m < 0x0A00)
         nv_render_state(m, v);
@@ -877,6 +898,26 @@ static bool prog_selected;
 
 #define MAX_PROGRAMS 256
 static struct { uint32_t start, count, hash; mdr_vsh_program *prog; } programs[MAX_PROGRAMS];
+
+static void nv_constant_word(uint32_t v)
+{
+    if (nv_const_slot < MDR_VSH_CONSTANTS)
+        MEM32(VSH_SHADOW + 16 * nv_const_slot + 4 * nv_const_word) = v;
+    if (++nv_const_word == 4) {
+        nv_const_word = 0;
+        nv_const_slot++;
+    }
+}
+
+static void nv_program_word(uint32_t v)
+{
+    if (nv_prog_slot < PROG_SLOTS)
+        prog_mem[nv_prog_slot][nv_prog_word] = v;
+    if (++nv_prog_word == 4) {
+        nv_prog_word = 0;
+        nv_prog_slot++;
+    }
+}
 
 static mdr_vsh_program *current_program(void)
 {
