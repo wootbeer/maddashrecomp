@@ -1969,7 +1969,7 @@ static void capture_outliers(const vsh_job *j, uint32_t count)
 {
     const mdr_vsh_program *p = j->p;
     bool rel = false;
-    float *c, med[3], far[2] = { -1.0f, -1.0f };
+    float *c, med[3], worst[2] = { -1.0f, -1.0f };
     uint32_t at[2] = { 0, 0 };
 
     for (uint32_t k = 0; k < p->count; k++)
@@ -1989,15 +1989,15 @@ static void capture_outliers(const vsh_job *j, uint32_t count)
             d += fabsf(j->out[i].pos[a] - med[a]);
         if (!(d == d))
             d = 1e30f;
-        if (d > far[0]) {
-            far[1] = far[0]; at[1] = at[0];
-            far[0] = d; at[0] = i;
-        } else if (d > far[1]) {
-            far[1] = d; at[1] = i;
+        if (d > worst[0]) {
+            worst[1] = worst[0]; at[1] = at[0];
+            worst[0] = d; at[0] = i;
+        } else if (d > worst[1]) {
+            worst[1] = d; at[1] = i;
         }
     }
     SDL_Log("capture:     a0 outliers of %u vertices (median %g %g %g): %u at %g, %u at %g", count, med[0], med[1],
-            med[2], at[0], far[0], at[1], far[1]);
+            med[2], at[0], worst[0], at[1], worst[1]);
     for (int k = 0; k < 2; k++) {
         float in[MDR_VSH_INPUTS][4], o[VSH_OUTPUTS][4];
         vsh_inputs(j, at[k], in);

@@ -88,5 +88,9 @@ window (`relaunch.c`, `mdr_guest_reboot`, patch 0047). Facts about the game and 
   `SDL_VIDEO_DRIVER=offscreen SDL_AUDIO_DRIVER=dummy`; `MDR_FAST=4`, `MDR_SCREENSHOT=dir`,
   `MDR_CAPTURE=frame`, `MDR_INPUT_SCRIPT` (from Orta; they need the D3D
   and input hooks).
+- Before pushing C changes, check that they build for Windows:
+  `x86_64-w64-mingw32-gcc -fsyntax-only` on the changed files (package
+  gcc-mingw-w64-x86-64, the include paths from `build/dev/build.ninja`).
+  `windows.h` defines `far`, `near` and other words as macros.
 - Windows: build from a Developer PowerShell; `--log run.log`, not
   PowerShell redirection. F12 captures a frame, F11 dumps threads.

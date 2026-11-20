@@ -76,8 +76,10 @@ static const int picture_items[] = { ITEM_PIC_LOOK, ITEM_PIC_BRIGHT, ITEM_PIC_CO
                                      ITEM_PIC_RESET, ITEM_BACK };
 static const int sound_items[] = { ITEM_VOLUME, ITEM_3D, ITEM_HRTF, ITEM_BACK };
 /* Orta's ITEM_BOX (Pandora's Box unlocks) and ITEM_LOGOS (skip the boot
- * logos) are out of the list until Mad Dash has hooks of its own for them. */
-static const int gameplay_items[] = { ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_BACK };
+ * logos) are out of the list until Mad Dash has hooks of its own for them;
+ * ITEM_RUMBLE too: Mad Dash never sets a controller's motors (no
+ * XInputSetState call). */
+static const int gameplay_items[] = { ITEM_LAUNCHER, ITEM_BACK };
 /* Android's on-screen controls (src/android/touch_controls.c). */
 static const int touch_items[] = { ITEM_TOUCH, ITEM_TOUCH_SIZE, ITEM_TOUCH_ALPHA, ITEM_BACK };
 #ifdef __ANDROID__
