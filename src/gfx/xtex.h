@@ -27,6 +27,9 @@ typedef struct mdr_xtex_info {
 
 /* Fill info from a D3DPixelContainer's Format and Size words. */
 void mdr_xtex_describe(uint32_t format_word, uint32_t size_word, mdr_xtex_info *info);
+/* Whether the format word's color format is a linear one (it then needs
+ * a Size word: the NV2A has it as an image rect and a pitch instead). */
+bool mdr_xtex_is_linear(uint32_t format_word);
 
 /* Mip levels stored after level 0 (swizzled and DXT textures; a linear
  * texture has one): how many levels there are, and level n's info and byte

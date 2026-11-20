@@ -488,9 +488,32 @@ static struct {
     bool     tex_api[4];                    /* the stage's last setting was SetTexture's */
 } nv;
 
+/* The simple render states (57-81) the game writes as NV2A methods itself
+ * (the display list's blend and alpha test: 0x0300, 0x0304, 0x033C on),
+ * back into D3D's table under the state whose method it is (the library's
+ * table 0x002A29A8; a simple state's value is the NV2A's). */
+static void nv_render_state(uint32_t m, uint32_t v)
+{
+    static uint16_t state_of[0x800];    /* method / 4 -> state, 0 none */
+    static bool ready;
+
+    if (!ready) {
+        for (uint32_t i = 57; i < 82; i++) {
+            uint32_t h = MEM32(0x002A29A8u + 4u * i) & 0x1FFCu;
+            if (h)
+                state_of[h / 4] = (uint16_t)i;
+        }
+        ready = true;
+    }
+    if (m < 0x2000 && state_of[m / 4])
+        MEM32(0x0024BE88u + 4u * state_of[m / 4]) = v;
+}
+
 static void nv_method(uint32_t m, uint32_t v)
 {
-    if (m >= 0x1720 && m < 0x1760)
+    if (m >= 0x0300 && m < 0x0A00)
+        nv_render_state(m, v);
+    else if (m >= 0x1720 && m < 0x1760)
         nv.va_offset[(m - 0x1720) / 4] = v;
     else if (m >= 0x1760 && m < 0x17A0)
         nv.va_format[(m - 0x1760) / 4] = v;
@@ -1053,7 +1076,7 @@ static void fill_draw_state(mdr_draw *d, bool pretransformed)
             mdr_xtex_info ti;
             uint32_t size_word = 0, rect = t[7], pitch = t[4] >> 16;
             static const uint8_t addr_mode[8] = { 1, 1, 2, 3, 4, 3, 1, 1 };     /* NV2A -> D3DTADDRESS */
-            if (rect && pitch)  /* linear: D3D's Size word, from the image rect and pitch */
+            if (rect && pitch && mdr_xtex_is_linear(t[1]))  /* D3D's Size word, from the rect and pitch */
                 size_word = ((rect >> 16) - 1) | ((rect & 0xFFFF) - 1) << 12 | (pitch / 64 - 1) << 24;
             if (api)
                 size_word = MEM32(api + 16);    /* D3DResource: Common, Data, Lock, Format, Size */
@@ -2305,6 +2328,17 @@ void sub_00247B70(void)
     draws_called++;
     pb_catch_up();
     pb_trace_draw("End", imm.type, prog_selected ? immp.n : imm.n);
+    if (prog_selected && immp.n && getenv("MDR_PB_TRACE")) {
+        static long long f = -2;
+        if (f == -2)
+            f = atoll(getenv("MDR_PB_TRACE"));
+        if (mdr_gfx_frame_count() == (uint64_t)f)
+            for (uint32_t i = 0; i < immp.n && i < 4; i++)
+                for (int r = 0; r < 16; r++)
+                    if (immp.set & (1u << r))
+                        SDL_Log("pb:     v%u r%d %g %g %g %g", i, r, immp.v[i * 64 + r * 4], immp.v[i * 64 + r * 4 + 1],
+                                immp.v[i * 64 + r * 4 + 2], immp.v[i * 64 + r * 4 + 3]);
+    }
     if (imm.active && prog_selected && immp.n) {
         /* Stage the vertices in guest memory as the program's arrays, for
          * the draw path, which reads the game's own vertex bytes. */

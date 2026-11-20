@@ -93,6 +93,12 @@ void mdr_xtex_describe(uint32_t format_word, uint32_t size_word, mdr_xtex_info *
         info->bytes = info->width * info->height * f->bpp / 8;
 }
 
+bool mdr_xtex_is_linear(uint32_t format_word)
+{
+    const struct fmt *f = find((format_word >> 8) & 0xFF);
+    return f && f->layout == LINEAR;
+}
+
 static uint32_t level_bytes(const struct fmt *f, uint32_t w, uint32_t h)
 {
     if (f->layout == COMPRESSED)
