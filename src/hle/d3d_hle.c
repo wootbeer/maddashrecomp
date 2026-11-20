@@ -1921,6 +1921,62 @@ static bool use_gpu_vsh(mdr_vsh_program *p)
     return p->gpu_program >= 0;
 }
 
+static int cmp_float(const void *a, const void *b)
+{
+    float x = *(const float *)a, y = *(const float *)b;
+    return x < y ? -1 : x > y;
+}
+
+/* A capture: the two vertices of a draw of a program that reads constants
+ * through a0 (skinning) that land furthest from the draw's median position,
+ * their inputs and an instruction trace (the tethers). */
+static void capture_outliers(const vsh_job *j, uint32_t count)
+{
+    const mdr_vsh_program *p = j->p;
+    bool rel = false;
+    float *c, med[3], far[2] = { -1.0f, -1.0f };
+    uint32_t at[2] = { 0, 0 };
+
+    for (uint32_t k = 0; k < p->count; k++)
+        rel |= p->op[k].rel != 0;
+    if (!rel || !(c = SDL_malloc(count * sizeof *c)))
+        return;
+    for (int a = 0; a < 3; a++) {
+        for (uint32_t i = 0; i < count; i++)
+            c[i] = j->out[i].pos[a];
+        qsort(c, count, sizeof *c, cmp_float);
+        med[a] = c[count / 2];
+    }
+    SDL_free(c);
+    for (uint32_t i = 0; i < count; i++) {
+        float d = 0.0f;
+        for (int a = 0; a < 3; a++)
+            d += fabsf(j->out[i].pos[a] - med[a]);
+        if (!(d == d))
+            d = 1e30f;
+        if (d > far[0]) {
+            far[1] = far[0]; at[1] = at[0];
+            far[0] = d; at[0] = i;
+        } else if (d > far[1]) {
+            far[1] = d; at[1] = i;
+        }
+    }
+    SDL_Log("capture:     a0 outliers of %u vertices (median %g %g %g): %u at %g, %u at %g", count, med[0], med[1],
+            med[2], at[0], far[0], at[1], far[1]);
+    for (int k = 0; k < 2; k++) {
+        float in[MDR_VSH_INPUTS][4], o[VSH_OUTPUTS][4];
+        vsh_inputs(j, at[k], in);
+        SDL_Log("capture:     a0 outlier %u pos %g %g %g %g", at[k], j->out[at[k]].pos[0], j->out[at[k]].pos[1],
+                j->out[at[k]].pos[2], j->out[at[k]].pos[3]);
+        for (int r = 0; r < MDR_VSH_INPUTS; r++)
+            if (p->inputs_read & (1u << r))
+                SDL_Log("capture:     a0 v%d = %g %g %g %g", r, in[r][0], in[r][1], in[r][2], in[r][3]);
+        mdr_vsh_trace = true;
+        mdr_vsh_run(p, (const float (*)[4])in, vconst, o);
+        mdr_vsh_trace = false;
+    }
+}
+
 static bool fetch_vsh(const mdr_vsh_program *p, uint32_t base, uint32_t stride,
                       uint32_t first, uint32_t count, mdr_vertex *out)
 {
@@ -1944,6 +2000,8 @@ static bool fetch_vsh(const mdr_vsh_program *p, uint32_t base, uint32_t stride,
         vsh_range(&j, 0, count);
     else
         mdr_vsh_parallel(count, vsh_range, &j);
+    if (mdr_gfx_capturing() && count > 8)
+        capture_outliers(&j, count);
 
     /* Once a second: how many vertices the programs ran on, and the time. */
     {
