@@ -5,9 +5,10 @@ launcher, game-file picker (ISO or folder), F1 menu, settings, renderer,
 mixer, crash reports, Android project and the 43 xboxrecomp patches, renamed
 for Mad Dash (`MadDashRecomp`, `maddashrecomp.ini`, `MDR_*`, `mdr_*`). The
 game recompiles, builds, plays its logo movies with sound and shows its
-title screen and main menu as on the console (cloud screenshots); left
-idle it relaunches itself into the attract demo (`relaunch.c`). No input
-yet. Facts about the game and the boots so far:
+title screen and its menus as on the console, and takes controller input
+(START opens Adventure, A its sign-up screen: cloud screenshots with
+`MDR_INPUT_SCRIPT`); left idle it relaunches itself into the attract demo
+(`relaunch.c`). Facts about the game and the boots so far:
 `docs/maddash-facts.md`.
 
 ## How it fits together
@@ -42,8 +43,11 @@ yet. Facts about the game and the boots so far:
   lifted: Bink's CPU check): the stream reader races, found in
   this game (`docs/maddash-facts.md`). Worth sending upstream, and to
   Orta Recomp, whose main thread also ran unlocked.
-- `src/hle/orta/`: the rest of Orta's hooks (Direct3D draws and state,
-  input, waits; its DirectSound is ported), at **Orta's addresses**: not built, not
+- `src/hle/input_hle.c`: Orta's input on SDL3, re-addressed for XAPI 3911
+  (XGetDevices, XInputOpen/Close/GetState; XGetDeviceChanges runs on the
+  masks it keeps current); no rumble (the game calls no XInputSetState).
+- `src/hle/orta/`: Orta's originals, kept for reference (its wait trace
+  is not ported), at **Orta's addresses**: not built, not
   scanned. `docs/hle-port.md` lists them.
 - Not carried over: Orta's pd1 (second program), CRI/Sofdec and AIX (Mad
   Dash uses Bink), Orta's game hooks (widescreen, unlocks, difficulty, intro
@@ -55,7 +59,9 @@ yet. Facts about the game and the boots so far:
    over later frames (no UNIMPL reached; the MMX primitives Bink uses look
    right): a mis-lifted instruction in a rarer block path. Bink needs MMX
    (with cpuid reporting none it picks nothing).
-2. Input (XInputGetState 0x0028F244 and friends), from `src/hle/orta/`.
+2. A race: the levels are separate relaunches (`maddash-facts.md`); the
+   cloud subset has no level files beyond the front end. Testing races
+   needs a level .bgx (e.g. `levels\ruins\`) or the Windows build.
 3. Boot further (the cloud has a front-end subset of `media/`, uploaded by
    the owner; music `.str` files are not on the owner's listing), keep
    collecting `[ICALL] Failed`
