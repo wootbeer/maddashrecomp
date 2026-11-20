@@ -153,9 +153,8 @@ default.xbe's (the only one recognised).
 
 ## Bink
 
-- Movies play (Eidos and Crystal Dynamics logos, ~30 fps), but Bink's CPU
-  check (pushfd/popfd/cpuid at 0x0025AC75; the lifter leaves them as
-  no-ops) leaves a function pointer at 0x0031541C null, and the decoder
-  calls it a million times (from 0x0025013A, 0x002502C8): the pictures are
-  likely not decoded. Wanted: cpuid answering as the Xbox's Pentium III,
-  and pushfd/popfd, in the lifter.
+- Movies play (Eidos and Crystal Dynamics logos, ~30 fps). Bink's CPU
+  check (pushfd/popfd/cpuid at 0x0025AC75) picks its decoder routines
+  into 0x0031541C; with the three as lifter no-ops it was left null and
+  called a million times. Patch 0046 lifts them (cpuid answers as the
+  Xbox's Pentium III): no null calls since.

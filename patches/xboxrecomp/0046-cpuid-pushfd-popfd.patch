@@ -1,0 +1,97 @@
+--- a/src/kernel/recomp_trace.c
++++ b/src/kernel/recomp_trace.c
+@@ -269,3 +269,54 @@ void recomp_debug_service(uint32_t service, uint32_t arg_va)
+         fputc('\n', stderr);
+     fflush(stderr);
+ }
++
++/* ---------------------------------------------------------------------------
++ * cpuid, pushfd, popfd: see recomp_types.h.
++ * ------------------------------------------------------------------------- */
++
++extern RECOMP_TLS int g_df;
++
++/* EFLAGS' system bits as the guest last set them: ID (21), AC (18), IF (9);
++ * IF reads 1, as in user code. Bit 1 always reads 1. */
++static RECOMP_TLS uint32_t t_eflags_sys = 0x00000200u;
++#define EFLAGS_SYS_MASK 0x00240200u
++
++uint32_t recomp_eflags_read(void)
++{
++    return 0x00000002u | t_eflags_sys | (g_df ? 0x00000400u : 0);
++}
++
++void recomp_eflags_write(uint32_t value)
++{
++    t_eflags_sys = (value & EFLAGS_SYS_MASK) | 0x00000200u;
++    g_df = (value & 0x00000400u) != 0;
++}
++
++void recomp_cpuid(void)
++{
++    switch (g_eax) {
++    case 0:                 /* highest leaf, "GenuineIntel" */
++        g_eax = 2;
++        g_ebx = 0x756E6547u;
++        g_edx = 0x49656E69u;
++        g_ecx = 0x6C65746Eu;
++        break;
++    case 1:                 /* family 6 model 8 stepping 10 */
++        g_eax = 0x0000068Au;
++        g_ebx = 0;
++        g_ecx = 0;
++        /* FPU VME DE PSE TSC MSR PAE MCE CX8 SEP MTRR PGE MCA CMOV PAT
++         * PSE36 MMX FXSR SSE */
++        g_edx = 0x0383F9FFu;
++        break;
++    case 2:                 /* cache descriptors: 128 KB L2, 16 KB L1s */
++        g_eax = 0x03020101u;
++        g_ebx = 0;
++        g_ecx = 0;
++        g_edx = 0x0C040841u;
++        break;
++    default:
++        g_eax = g_ebx = g_ecx = g_edx = 0;
++        break;
++    }
++}
+--- a/templates/runtime/recomp_types.h
++++ b/templates/runtime/recomp_types.h
+@@ -78,6 +78,18 @@
+  * with STATUS_BREAKPOINT the first time a title tried to print. */
+ void recomp_debug_service(uint32_t service, uint32_t arg_va);
+ 
++/* cpuid, pushfd and popfd (src/kernel/recomp_trace.c). cpuid answers as
++ * the Xbox's processor, a Pentium III-class Celeron (GenuineIntel, family
++ * 6, model 8: MMX, SSE, CMOV). pushfd/popfd carry EFLAGS' system bits (ID,
++ * AC, IF) and DF through the stack; the arithmetic flags are tracked by the
++ * lifter per comparison and are not in the pushed word. That is what the
++ * CPUID-availability check needs (toggle bit 21, see whether it stays): a
++ * title's CPU check -- Bink's, before choosing its decoder routines --
++ * otherwise read whatever the registers held. */
++void recomp_cpuid(void);
++uint32_t recomp_eflags_read(void);
++void recomp_eflags_write(uint32_t value);
++
+ /* MSVC's __debugbreak() intrinsic -> gcc/clang equivalent.
+  * The auto-generated code emits __debugbreak for x86 INT 3 instructions.
+  * !defined(__debugbreak) is not enough on its own: MinGW declares __debugbreak
+--- a/tools/recomp/lifter.py
++++ b/tools/recomp/lifter.py
+@@ -1576,6 +1576,16 @@ class Lifter:
+             return ["esp = ebp;", "POP32(esp, ebp); /* leave */"]
+         if m in ("cld", "std"):
+             return [f"g_df = {0 if m == 'cld' else 1}; /* {m} */"]
++        # cpuid, pushfd, popfd: through the runtime (recomp_types.h). A CPU
++        # check -- Bink's, before it picks its decoder routines -- toggles
++        # EFLAGS.ID with pushfd/popfd and then asks cpuid; as no-ops it read
++        # whatever the registers held and left its routines unset.
++        if m == "cpuid":
++            return ["recomp_cpuid(); /* cpuid */"]
++        if m == "pushfd":
++            return [f"PUSH32(esp, recomp_eflags_read()); /* {m} */"]
++        if m == "popfd":
++            return ["{ uint32_t _ef; POP32(esp, _ef); recomp_eflags_write(_ef); } /* popfd */"]
+         if m == "lahf":
+             return ["/* lahf - load AH from flags (used in FPU compare idiom) */"]
+         if m == "sahf":
