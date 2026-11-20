@@ -1854,7 +1854,26 @@ static void vsh_range(void *ctx, uint32_t lo, uint32_t hi)
  * of it), and in c[58] and c[59] the viewport transform the XDK ends every
  * program with, as the hardware mirrors it from the viewport. Returns that
  * transform's scale and offset, and the depth scale to undo it with. */
-static void vsh_constants(float scale[3], float offset[3], float *zs_out)
+/* Whether a program reads c[58] or c[59] directly: the viewport transform
+ * the XDK's compiled programs end with. Mad Dash's skinning program reads
+ * its bone matrices through a0 across the whole file, c[57-59] the
+ * twentieth of them; supplied there, the viewport transform flung that
+ * bone's vertices millions of units off (the tethers to the right of the
+ * characters). */
+static bool reads_viewport(const mdr_vsh_program *p)
+{
+    for (uint32_t k = 0; p && k < p->count; k++) {
+        const mdr_vsh_op *op = &p->op[k];
+        if (op->rel || (op->cidx != 58 && op->cidx != 59))
+            continue;
+        for (int i = 0; i < 3; i++)
+            if ((op->use & (1u << i)) && op->src[i].mux == 3)
+                return true;
+    }
+    return false;
+}
+
+static void vsh_constants(const mdr_vsh_program *p, float scale[3], float offset[3], float *zs_out)
 {
     float x = 0, y = 0, w = 640, h = 480, zs = 16777215.0f, zo = 0;
     int rtw, rth;
@@ -1870,10 +1889,11 @@ static void vsh_constants(float scale[3], float offset[3], float *zs_out)
     }
     scale[0] = w * 0.5f; scale[1] = -h * 0.5f; scale[2] = zs;
     offset[0] = x + w * 0.5f + 0.53125f; offset[1] = y + h * 0.5f + 0.53125f; offset[2] = zo;
-    for (int k = 0; k < 3; k++) {
-        vconst[58][k] = scale[k];
-        vconst[59][k] = offset[k];
-    }
+    if (reads_viewport(p))
+        for (int k = 0; k < 3; k++) {
+            vconst[58][k] = scale[k];
+            vconst[59][k] = offset[k];
+        }
     *zs_out = zs != 0.0f ? zs : 1.0f;
 }
 
@@ -1887,7 +1907,7 @@ static void vsh_gpu_job(const mdr_vsh_program *p, uint32_t base, uint32_t stride
     float zs;
 
     memset(g, 0, sizeof *g);
-    vsh_constants(g->vp_scale, g->vp_offset, &zs);
+    vsh_constants(p, g->vp_scale, g->vp_offset, &zs);
     g->vp_offset[3] = zs;
     g->constants = (const float (*)[4])vconst;
     g->consts_read = p->consts_read;
@@ -2018,7 +2038,7 @@ static bool fetch_vsh(const mdr_vsh_program *p, uint32_t base, uint32_t stride,
     vsh_job j;
     uint64_t t0;
 
-    vsh_constants(j.scale, j.offset, &j.zs);
+    vsh_constants(p, j.scale, j.offset, &j.zs);
     j.p = p;
     j.handle = prog_start;
     j.first = first;
@@ -2589,7 +2609,7 @@ void sub_00247B70(void)
             }
             if (tp) {
                 float in[MDR_VSH_INPUTS][4] = { { 0 } }, o[VSH_OUTPUTS][4], sc[3], of[3], zs;
-                vsh_constants(sc, of, &zs);
+                vsh_constants(tp, sc, of, &zs);
                 for (int r = 0; r < 16 && r < MDR_VSH_INPUTS; r++)
                     memcpy(in[r], immp.v + r * 4, sizeof in[r]);
                 mdr_vsh_trace = true;
