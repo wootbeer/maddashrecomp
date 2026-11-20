@@ -98,6 +98,13 @@ target_sources(MadDashRecomp PRIVATE
     src/sha256.c
 )
 target_include_directories(MadDashRecomp PRIVATE src)
+# The commit built, in the log's first line (tools/cmake/commit.cmake, every build).
+add_custom_target(mdr_commit
+    COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_CURRENT_SOURCE_DIR} -DOUT=${CMAKE_BINARY_DIR}/mdr_commit.h
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/cmake/commit.cmake
+    BYPRODUCTS ${CMAKE_BINARY_DIR}/mdr_commit.h)
+add_dependencies(MadDashRecomp mdr_commit)
+target_include_directories(MadDashRecomp PRIVATE ${CMAKE_BINARY_DIR})
 target_link_libraries(MadDashRecomp PRIVATE SDL3::SDL3-static)
 target_compile_definitions(MadDashRecomp PRIVATE MDR_VERSION="${PROJECT_VERSION}")
 if(WIN32)

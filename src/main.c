@@ -17,6 +17,7 @@
  * run before kept as maddashrecomp-previous.log.
  */
 
+#include "mdr_commit.h"
 #include "assets.h"
 #include "config.h"
 #include "setup_ui.h"
@@ -528,7 +529,7 @@ int main(int argc, char **argv)
     }
 #endif
     SDL_SetAppMetadata(APP_NAME, MDR_VERSION, "io.github.maddashrecomp");
-    SDL_Log("%s %s (built %s), %s, %d logical cores, %d MB RAM", APP_NAME, MDR_VERSION, __DATE__,
+    SDL_Log("%s %s (%s, built %s), %s, %d logical cores, %d MB RAM", APP_NAME, MDR_VERSION, MDR_COMMIT, __DATE__,
             SDL_GetPlatform(), SDL_GetNumLogicalCPUCores(), SDL_GetSystemRAM());
     {
         const char *dir = mdr_data_dir();      /* first: it sets the note */
