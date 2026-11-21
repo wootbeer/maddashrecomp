@@ -977,8 +977,14 @@ static uint32_t prog_mem[PROG_SLOTS][4];
 static uint32_t prog_start;
 static bool prog_selected;
 
-#define MAX_PROGRAMS 256
-static struct { uint32_t start, count, hash; mdr_vsh_program *prog; } programs[MAX_PROGRAMS];
+/* Programs found, kept by their words alone: Mad Dash loads the same ones
+ * at other places in program memory as a race goes on (a 12-instruction
+ * one at 66, 67 and 118), and keyed by place as well they filled the table
+ * with copies; full, every new one took slot 0, so programs were parsed and
+ * their shaders made again and again. Full now, the oldest goes. */
+#define MAX_PROGRAMS 1024
+static struct { uint32_t count, hash; mdr_vsh_program *prog; } programs[MAX_PROGRAMS];
+static int programs_next;
 
 static void nv_constant_word(uint32_t v)
 {
@@ -1018,8 +1024,7 @@ static mdr_vsh_program *current_program(void)
             break;
     }
     for (int i = 0; i < MAX_PROGRAMS; i++)
-        if (programs[i].prog && programs[i].start == prog_start && programs[i].count == n &&
-            programs[i].hash == hash)
+        if (programs[i].prog && programs[i].hash == hash && programs[i].count == n)
             return programs[i].prog;
     func[0] = 0x2078u | (n << 16);
     p = SDL_malloc(sizeof *p);
@@ -1028,14 +1033,10 @@ static mdr_vsh_program *current_program(void)
         SDL_free(p);
         return NULL;
     }
-    for (int i = 0; i < MAX_PROGRAMS && slot < 0; i++)
-        if (!programs[i].prog)
-            slot = i;
-    if (slot < 0) {
-        slot = 0;                       /* full: start over */
-        SDL_Log("d3d: more than %d vertex programs", MAX_PROGRAMS);
-    }
-    programs[slot].start = prog_start;
+    slot = programs_next;
+    programs_next = (programs_next + 1) % MAX_PROGRAMS;
+    if (programs[slot].prog && !programs_next)
+        SDL_Log("d3d: more than %d vertex programs: the oldest are replaced", MAX_PROGRAMS);
     programs[slot].count = n;
     programs[slot].hash = hash;
     programs[slot].prog = p;
