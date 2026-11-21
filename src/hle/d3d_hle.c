@@ -2181,6 +2181,42 @@ static bool timed_fvf(uint32_t fvf, uint32_t base, uint32_t stride, uint32_t fir
     return ok;
 }
 
+/* Widescreen (src/guest/widescreen.c): the game lays out its 2D (HUD,
+ * menus, the title's logo) for 4:3 in a frame the window shows wider, so
+ * each 2D draw is squeezed back by 4:3 over the screen's shape, about the
+ * middle: the HUD in a 4:3 area in the middle, at its own proportions. A
+ * draw is 2D when it is screen space: fixed-function pre-transformed
+ * vertices (XYZRHW), or a vertex program whose output w is 1 for its first
+ * and last vertex (a perspective draw's w is its depth). One as wide as
+ * the screen (a backdrop, a fade) stays as it is. 1: none. */
+static float hud_squeeze_of(float x0, float x1)
+{
+    int rtw, rth;
+
+    if (!mdr_widescreen_active())
+        return 1.0f;
+    target_size(&rtw, &rth);
+    if (SDL_min(x0, x1) <= 1.0f && SDL_max(x0, x1) >= (float)rtw - 2.0f)
+        return 1.0f;
+    return (4.0f / 3.0f) / mdr_widescreen_ratio();
+}
+
+/* A fixed-function draw's squeeze: pre-transformed ones only, by the
+ * horizontal extent of their vertices. */
+static float fvf_squeeze(uint32_t base, uint32_t stride, uint32_t first, uint32_t count)
+{
+    float lo = 1e9f, hi = -1e9f;
+
+    if (!count || !mdr_widescreen_active() || (st.vshader & 0x00E) != 0x004)
+        return 1.0f;
+    for (uint32_t i = 0; i < count; i++) {
+        float x = lf(MEM32(base + (first + i) * stride));
+        lo = SDL_min(lo, x);
+        hi = SDL_max(hi, x);
+    }
+    return hud_squeeze_of(lo, hi);
+}
+
 static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t first, uint32_t count,
                         const uint32_t *order, uint32_t n)
 {
@@ -2193,6 +2229,7 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
     static mdr_gpu_fvf gpu_f;
     bool fvf_on_gpu = false;                /* or the fixed-function vertices do */
     bool cpu_too = true;                    /* and the CPU makes the vertices as well */
+    float squeeze = 1.0f;                   /* a 2D draw's on a wider screen (hud_squeeze_of) */
 
     state_init();
     if (count > vcap) {
@@ -2256,8 +2293,8 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
                 last = mdr_gfx_frame_count();
             }
         }
-    } else if (type != 1 && mdr_settings_get()->gpu_fixed &&
-               !mdr_gfx_vertex_shader_failed(true) &&
+    } else if (type != 1 && (squeeze = fvf_squeeze(base, stride, first, count)) == 1.0f &&
+               mdr_settings_get()->gpu_fixed && !mdr_gfx_vertex_shader_failed(true) &&
                fvf_on_gpu_job(base, stride, first, count, &gpu_f)) {
         fvf_on_gpu = true;
         pre = (gpu_f.u.layout0[2] & MDR_FVF_PRE) != 0;
@@ -2270,6 +2307,9 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
             SDL_Log("d3d: FVF 0x%x not handled", st.vshader);
         draws_dropped++;
         return;
+    } else if (squeeze != 1.0f) {
+        for (uint32_t i = 0; i < count; i++)    /* clip space: the middle is 0 */
+            vbuf[i].pos[0] *= squeeze;
     }
     fill_draw_state(&d, pre);
     {   /* MDR_CAPTURE=frame: the render-state table around fog, once. */
@@ -2355,6 +2395,17 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
     if (gpu_p) {
         mdr_gpu_vsh g;
         vsh_gpu_job(gpu_p, base, stride, first, count, &g);
+        if (g.anchored && SDL_fabsf(g.anchor[0][3] - 1.0f) < 1e-4f && SDL_fabsf(g.anchor[1][3] - 1.0f) < 1e-4f)
+            squeeze = hud_squeeze_of(g.anchor[0][0], g.anchor[1][0]);
+        if (squeeze != 1.0f) {
+            /* The renderer takes the viewport's transform back off oPos
+             * (shaders/vsh.vert, to_clip): a wider scale there is a
+             * narrower picture, about the viewport's middle. */
+            g.vp_scale[0] /= squeeze;
+            if (cpu_too)
+                for (uint32_t i = 0; i < count; i++)
+                    vbuf[i].pos[0] *= squeeze;
+        }
         mdr_gfx_draw_vsh(&d, &g, count, ibuf, ni, cpu_too ? vbuf : NULL);
     } else if (fvf_on_gpu) {
         if (!mdr_gfx_draw_fvf(&d, &gpu_f, count, ibuf, ni, cpu_too ? vbuf : NULL)) {
@@ -2364,6 +2415,17 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
             mdr_gfx_draw(&d, vbuf, count, ibuf, ni);
         }
     } else {
+        if (prog_selected && count && mdr_widescreen_active() &&
+            SDL_fabsf(vbuf[0].pos[3] - 1.0f) < 1e-4f && SDL_fabsf(vbuf[count - 1].pos[3] - 1.0f) < 1e-4f) {
+            /* A program run on the CPU: screen space as on the GPU path. */
+            int rtw, rth;
+            target_size(&rtw, &rth);
+            squeeze = hud_squeeze_of((vbuf[0].pos[0] + 1.0f) * 0.5f * (float)rtw,
+                                     (vbuf[count - 1].pos[0] + 1.0f) * 0.5f * (float)rtw);
+            if (squeeze != 1.0f)
+                for (uint32_t i = 0; i < count; i++)
+                    vbuf[i].pos[0] *= squeeze;
+        }
         /* The game's vertex data, so interpolation can find this draw in
          * the next frame. */
         mdr_gfx_set_draw_source((const void *)XBOX_PTR(base + first * stride));

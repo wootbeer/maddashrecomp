@@ -1079,7 +1079,7 @@ static const char *help_of(int item)
     case ITEM_MSAA:   return "Smoother edges. MSAA is best.";
     case ITEM_ANISO:  return "Anisotropic: sharper far away.";
     case ITEM_ASPECT:
-        return mdr_widescreen_needs_restart() ? "Restart to switch 4:3/wide." : "Wider shows more to the sides.";
+        return mdr_widescreen_needs_restart() ? "Takes effect at the next race." : "Wider shows more to the sides.";
     case ITEM_FIT:    return "Bars, stretched or zoomed.";
     case ITEM_HUD:    return "21:9: HUD centered or at edges.";
     case ITEM_MOVIES: {
