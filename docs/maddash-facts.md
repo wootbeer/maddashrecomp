@@ -157,6 +157,16 @@ default.xbe's (the only one recognised).
 
 ## Bink
 
+- Entry points the movie player calls: BinkOpen 0x0024D770, BinkDoFrame
+  0x0024CD40 (`ret 4`), BinkCopyToBuffer 0x0024C730 (7 arguments),
+  BinkNextFrame 0x0024E3D0, BinkClose 0x0024E530, 0x0024D2E0 (BinkWait,
+  by its use). BinkDoFrame decodes the planes through 0x00254590 (14
+  arguments, `ret 0x38`; per plane 0x002527D0); the 8x8 inverse DCT is
+  0x0025ACF0 (coefficients at eax, dequantizer at edx, destination on the
+  stack). Its `movsx ebp, bp` was lifted as a zero extension (patch 0048):
+  a negative coefficient in row 6 became 65535 and the block went wild,
+  then spread through later frames by motion compensation.
+
 - Movies play (Eidos and Crystal Dynamics logos, ~30 fps). Bink's CPU
   check (pushfd/popfd/cpuid at 0x0025AC75) picks its decoder routines
   into 0x0031541C; with the three as lifter no-ops it was left null and

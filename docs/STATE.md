@@ -15,7 +15,7 @@ window (`relaunch.c`, `mdr_guest_reboot`, patch 0047). Facts about the game and 
 ## How it fits together
 
 - `tools/recomp.py`: the USA `default.xbe` (or the ISO) -> `gen/` through
-  xboxrecomp and patches 0001-0047. Data sections `.data` and `BINKDATA` are
+  xboxrecomp and patches 0001-0048. Data sections `.data` and `BINKDATA` are
   excluded from the code sweep. 24 seeds from the first boot
   (`tools/mdr_seeds.json`).
 - `src/xbe.c`, `tools/recomp.py`: title ID 45530001, the one known dump
@@ -42,7 +42,8 @@ window (`relaunch.c`, `mdr_guest_reboot`, patch 0047). Facts about the game and 
 - xboxrecomp patches 0044 (IO status block order), 0045 (the title's
   main thread holds the guest CPU lock) and 0046 (cpuid, pushfd, popfd
   lifted: Bink's CPU check): the stream reader races, found in
-  this game (`docs/maddash-facts.md`). Worth sending upstream, and to
+  this game (`docs/maddash-facts.md`); 0048 (movsx from bp/sp was a
+  zero extension: Bink's IDCT, the movies' wrong blocks). Worth sending upstream, and to
   Orta Recomp, whose main thread also ran unlocked. 0047: a warm reboot
   (the title boots again in the same process; old threads park at the
   guest CPU lock, a boot generation added to 0023's lock).
@@ -58,10 +59,6 @@ window (`relaunch.c`, `mdr_guest_reboot`, patch 0047). Facts about the game and 
 
 ## Next
 
-1. Bink: the movies decode with isolated wrong 8x8 blocks that spread
-   over later frames (no UNIMPL reached; the MMX primitives Bink uses look
-   right): a mis-lifted instruction in a rarer block path. Bink needs MMX
-   (with cpuid reporting none it picks nothing).
 2. Races play on Windows (Tiki Village): in-place level loads, sound
    effects (3D voices on the crosstalk mixbins), characters (no more
    tethers), 60 fps. Open there: music cut-outs (recheck now that the
@@ -72,9 +69,6 @@ window (`relaunch.c`, `mdr_guest_reboot`, patch 0047). Facts about the game and 
    collecting `[ICALL] Failed`
    lines into `tools/mdr_seeds.json` (`"observed": true`). The 64 MB heap
    request at boot (docs/maddash-facts.md).
-4. Bink: decide between hooking Bink's own API (BinkOpen/BinkDoFrame/
-   BinkCopyToBuffer) and letting the recompiled decoder run, with its
-   output surfaces drawn by our D3D.
 5. Mad Dash's data files: what the disc holds (for the folder check in
    `src/assets.c`), save format, its own widescreen if any.
 6. The launcher-only build (no `gen/`) does not link: `overlay.c` is
@@ -90,6 +84,9 @@ window (`relaunch.c`, `mdr_guest_reboot`, patch 0047). Facts about the game and 
   `SDL_VIDEO_DRIVER=offscreen SDL_AUDIO_DRIVER=dummy`; `MDR_FAST=4`, `MDR_SCREENSHOT=dir`,
   `MDR_CAPTURE=frame`, `MDR_INPUT_SCRIPT` (from Orta; they need the D3D
   and input hooks).
+- A lifted function against the original x86: `src/guest/bink_diff.c`
+  saves guest memory around one call (MDR_BINK_DIFF=n), and Unicorn runs
+  the same call from the XBE's code (found Bink's movsx bug, patch 0048).
 - Before pushing C changes, check that they build for Windows:
   `x86_64-w64-mingw32-gcc -fsyntax-only` on the changed files (package
   gcc-mingw-w64-x86-64, the include paths from `build/dev/build.ninja`).

@@ -199,6 +199,7 @@ if(EXISTS "${MDR_GEN_DIR}/recomp_dispatch.c")
         src/guest/guest_manual.c
         src/guest/video_hooks.c
         src/guest/stream_wait.c
+        src/guest/bink_diff.c
         src/guest/widescreen.c)
     mdr_force_include(mdr_recomp "${CMAKE_CURRENT_SOURCE_DIR}/src/guest/maddash_names.h")
     # The host's own code, the same whichever program runs.
