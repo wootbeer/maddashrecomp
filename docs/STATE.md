@@ -64,7 +64,14 @@ window (`relaunch.c`, `mdr_guest_reboot`, patch 0047). Facts about the game and 
    tethers), 60 fps. Open there: music cut-outs (recheck now that the
    shaders run on the GPU; `MDR_DSOUND_TRACE=1` logs Process), the menus'
    ambience against the music, Frame gen. ghosting on characters.
-3. Boot further (the cloud has a front-end subset of `media/`, uploaded by
+3. A boot hung once on Windows (frame 2, `interp 1`, 6x): the main thread
+   polls a file request with Sleep(0) (0x0018C620 loop: request +4 <
+   wanted; pump 0x0017B290), the stream worker (0x00180D10) waits on its
+   request semaphore (queue at +0x4C, the reads ReadFile-with-OVERLAPPED
+   via 0x000AD2EB), so the request's completion was never seen. Not seen
+   in 8 cloud boots. Suspect: RECOMP_ASYNC_IO's STATUS_PENDING against
+   XAPI's OVERLAPPED handling. Instrument if it repeats.
+4. Boot further (the cloud has a front-end subset of `media/`, uploaded by
    the owner; music `.str` files are not on the owner's listing), keep
    collecting `[ICALL] Failed`
    lines into `tools/mdr_seeds.json` (`"observed": true`). The 64 MB heap
