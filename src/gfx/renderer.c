@@ -1072,6 +1072,7 @@ static int fs_shader_state(uint64_t key)
  * interpreter's); MDR_FS_WAIT=1/0 (or debug.maddashrecomp.fs_wait) to choose. */
 static bool fs_wait;
 static bool fs_wait_chosen;     /* MDR_FS_WAIT (or the property) given: kept as it says */
+static bool slow_pipelines;     /* a driver known to make pipelines slowly (mdr_gfx_init) */
 
 static uint64_t fs_key_of(const mdr_ff_uniforms *u, bool combiners, SDL_GPUShader **sh)
 {
@@ -2877,6 +2878,12 @@ static bool init_here(int width, int height)
         /* Which GPU and driver: performance reports name a laptop, not its
          * graphics. */
         SDL_PropertiesID pr = SDL_GetGPUDeviceProperties(dev);
+        /* AMD's proprietary driver makes the vertex interpreter's pipelines
+         * very slowly (7 s each on a Radeon RX 5700 XT under Windows: a
+         * 7.5 s stop in a race, 4.3 s during the logos), which get_pipeline
+         * only noticed after the first: from the start there. */
+        slow_pipelines = SDL_strstr(SDL_GetStringProperty(pr, SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING, ""),
+                                    "AMD proprietary") != NULL;
         SDL_Log("gfx: GPU driver %s: %s (%s %s)", SDL_GetGPUDeviceDriver(dev),
                 SDL_GetStringProperty(pr, SDL_PROP_GPU_DEVICE_NAME_STRING, "unknown GPU"),
                 SDL_GetStringProperty(pr, SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING, "driver"),
@@ -2923,6 +2930,8 @@ static bool init_here(int width, int height)
 #ifdef __ANDROID__
         pipelines_async = true;
 #endif
+        if (slow_pipelines)
+            pipelines_async = true;
         if (e && *e)
             pipelines_async = *e == '0';    /* 0: in the background anywhere, 1: here */
     }
@@ -2935,12 +2944,15 @@ static bool init_here(int width, int height)
             e = prop;
         fs_wait = mdr_android_gpu_driver_custom();
 #endif
+        if (slow_pipelines)
+            fs_wait = true;
         if (e && *e) {
             fs_wait = *e == '1';
             fs_wait_chosen = true;
         }
         if (fs_wait)
-            SDL_Log("gfx: draws wait for their fragment setup's own pipeline (no interpreter's in between)");
+            SDL_Log("gfx: draws wait for their fragment setup's own pipeline (no interpreter's in between)%s",
+                    slow_pipelines && !fs_wait_chosen ? ": this driver makes pipelines slowly" : "");
     }
     vkcache_load();             /* before any pipeline is made */
 
