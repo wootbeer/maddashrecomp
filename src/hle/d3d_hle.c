@@ -54,6 +54,7 @@ static Uint64 epoch;              /* time of vblank 0 */
 static SDL_AtomicInt last_called;  /* last vblank whose callback has run */
 static uint32_t vblank_data;       /* guest D3DVBLANKDATA */
 static int swap_interval = 1;      /* vblanks per Present; 0 = immediate */
+static bool backdrop_frame;        /* widescreen: a full-screen 2D backdrop this frame (hud_squeeze_of) */
 
 
 /* Draw calls since the last fps line: made, drawn, and dropped (no vertex
@@ -353,6 +354,7 @@ void sub_002473A0(void)
     uint64_t n;
 
     mdr_widescreen_frame();
+    backdrop_frame = false;
     if (swap_interval > 0) {
         while (current_vblank() < last_vblank + (Uint64)swap_interval)
             wait_vblank_for(true);
@@ -2183,38 +2185,71 @@ static bool timed_fvf(uint32_t fvf, uint32_t base, uint32_t stride, uint32_t fir
 
 /* Widescreen (src/guest/widescreen.c): the game lays out its 2D (HUD,
  * menus, the title's logo) for 4:3 in a frame the window shows wider, so
- * each 2D draw is squeezed back by 4:3 over the screen's shape, about the
- * middle: the HUD in a 4:3 area in the middle, at its own proportions. A
- * draw is 2D when it is screen space: fixed-function pre-transformed
- * vertices (XYZRHW), or a vertex program whose output w is 1 for its first
- * and last vertex (a perspective draw's w is its depth). One as wide as
- * the screen (a backdrop, a fade) stays as it is. 1: none. */
-static float hud_squeeze_of(float x0, float x1)
+ * each 2D draw is squeezed back by 4:3 over the screen's shape: the HUD at
+ * its own proportions. A draw is 2D when it is screen space: fixed-function
+ * pre-transformed vertices (XYZRHW), or a vertex program whose output w is
+ * 1 for its first and last vertex (a perspective draw's w is its depth).
+ * One as wide as the screen (a backdrop, a fade) stays as it is.
+ *
+ * About the middle (Display > HUD Centered: the 4:3 layout in the middle of
+ * the screen), or with Edges, for a piece in the top or bottom third of the
+ * screen: about the left edge if it lies in the left third and does not
+ * reach the right one, about the right edge for the mirror case (the race's
+ * timer, place, gauges). A frame that has drawn a 2D backdrop as wide and
+ * as high as the screen is a menu or a loading screen: everything in it
+ * about the middle, as laid out. */
+typedef struct squeeze_t { float k, at; } squeeze_t;    /* factor (1: none); anchor, clip x */
+
+static squeeze_t hud_squeeze_of(float x0, float x1, float y0, float y1)
 {
+    squeeze_t q = { 1.0f, 0.0f };
+    float lo = SDL_min(x0, x1), hi = SDL_max(x0, x1), top = SDL_min(y0, y1), bot = SDL_max(y0, y1), w3;
     int rtw, rth;
 
     if (!mdr_widescreen_active())
-        return 1.0f;
+        return q;
     target_size(&rtw, &rth);
-    if (SDL_min(x0, x1) <= 1.0f && SDL_max(x0, x1) >= (float)rtw - 2.0f)
-        return 1.0f;
-    return (4.0f / 3.0f) / mdr_widescreen_ratio();
+    if (lo <= 1.0f && hi >= (float)rtw - 2.0f) {
+        if (top <= 1.0f && bot >= (float)rth - 2.0f)
+            backdrop_frame = true;
+        return q;
+    }
+    q.k = (4.0f / 3.0f) / mdr_widescreen_ratio();
+    if (mdr_settings_get()->hud_edges && !backdrop_frame &&
+        (bot <= (float)rth / 3.0f || top >= 2.0f * (float)rth / 3.0f)) {
+        w3 = (float)rtw / 3.0f;
+        if (lo < w3 && hi <= 2.0f * w3)
+            q.at = -1.0f;
+        else if (hi > 2.0f * w3 && lo >= w3)
+            q.at = 1.0f;
+    }
+    return q;
+}
+
+/* A clip-space vertex squeezed: x about at * w. */
+static void squeeze_vertex(mdr_vertex *v, squeeze_t q)
+{
+    float a = q.at * v->pos[3];
+    v->pos[0] = a + (v->pos[0] - a) * q.k;
 }
 
 /* A fixed-function draw's squeeze: pre-transformed ones only, by the
- * horizontal extent of their vertices. */
-static float fvf_squeeze(uint32_t base, uint32_t stride, uint32_t first, uint32_t count)
+ * extent of their vertices. */
+static squeeze_t fvf_squeeze(uint32_t base, uint32_t stride, uint32_t first, uint32_t count)
 {
-    float lo = 1e9f, hi = -1e9f;
+    float lx = 1e9f, hx = -1e9f, ly = 1e9f, hy = -1e9f;
+    squeeze_t none = { 1.0f, 0.0f };
 
     if (!count || !mdr_widescreen_active() || (st.vshader & 0x00E) != 0x004)
-        return 1.0f;
+        return none;
     for (uint32_t i = 0; i < count; i++) {
-        float x = lf(MEM32(base + (first + i) * stride));
-        lo = SDL_min(lo, x);
-        hi = SDL_max(hi, x);
+        float x = lf(MEM32(base + (first + i) * stride)), y = lf(MEM32(base + (first + i) * stride + 4));
+        lx = SDL_min(lx, x);
+        hx = SDL_max(hx, x);
+        ly = SDL_min(ly, y);
+        hy = SDL_max(hy, y);
     }
-    return hud_squeeze_of(lo, hi);
+    return hud_squeeze_of(lx, hx, ly, hy);
 }
 
 static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t first, uint32_t count,
@@ -2229,7 +2264,7 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
     static mdr_gpu_fvf gpu_f;
     bool fvf_on_gpu = false;                /* or the fixed-function vertices do */
     bool cpu_too = true;                    /* and the CPU makes the vertices as well */
-    float squeeze = 1.0f;                   /* a 2D draw's on a wider screen (hud_squeeze_of) */
+    squeeze_t squeeze = { 1.0f, 0.0f };     /* a 2D draw's on a wider screen (hud_squeeze_of) */
 
     state_init();
     if (count > vcap) {
@@ -2293,7 +2328,7 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
                 last = mdr_gfx_frame_count();
             }
         }
-    } else if (type != 1 && (squeeze = fvf_squeeze(base, stride, first, count)) == 1.0f &&
+    } else if (type != 1 && (squeeze = fvf_squeeze(base, stride, first, count)).k == 1.0f &&
                mdr_settings_get()->gpu_fixed && !mdr_gfx_vertex_shader_failed(true) &&
                fvf_on_gpu_job(base, stride, first, count, &gpu_f)) {
         fvf_on_gpu = true;
@@ -2307,9 +2342,9 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
             SDL_Log("d3d: FVF 0x%x not handled", st.vshader);
         draws_dropped++;
         return;
-    } else if (squeeze != 1.0f) {
-        for (uint32_t i = 0; i < count; i++)    /* clip space: the middle is 0 */
-            vbuf[i].pos[0] *= squeeze;
+    } else if (squeeze.k != 1.0f) {
+        for (uint32_t i = 0; i < count; i++)
+            squeeze_vertex(&vbuf[i], squeeze);
     }
     fill_draw_state(&d, pre);
     {   /* MDR_CAPTURE=frame: the render-state table around fog, once. */
@@ -2396,15 +2431,18 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
         mdr_gpu_vsh g;
         vsh_gpu_job(gpu_p, base, stride, first, count, &g);
         if (g.anchored && SDL_fabsf(g.anchor[0][3] - 1.0f) < 1e-4f && SDL_fabsf(g.anchor[1][3] - 1.0f) < 1e-4f)
-            squeeze = hud_squeeze_of(g.anchor[0][0], g.anchor[1][0]);
-        if (squeeze != 1.0f) {
+            squeeze = hud_squeeze_of(g.anchor[0][0], g.anchor[1][0], g.anchor[0][1], g.anchor[1][1]);
+        if (squeeze.k != 1.0f) {
             /* The renderer takes the viewport's transform back off oPos
-             * (shaders/vsh.vert, to_clip): a wider scale there is a
-             * narrower picture, about the viewport's middle. */
-            g.vp_scale[0] /= squeeze;
+             * (shaders/vsh.vert, to_clip: x = (oPos.x - offset) / scale,
+             * w being 1): scale / k narrows the picture by k about the
+             * viewport's middle, and the offset moved by at (1 - k) scale
+             * / k puts the point it is narrowed about at clip x at. */
+            g.vp_offset[0] -= squeeze.at * (1.0f - squeeze.k) * g.vp_scale[0] / squeeze.k;
+            g.vp_scale[0] /= squeeze.k;
             if (cpu_too)
                 for (uint32_t i = 0; i < count; i++)
-                    vbuf[i].pos[0] *= squeeze;
+                    squeeze_vertex(&vbuf[i], squeeze);
         }
         mdr_gfx_draw_vsh(&d, &g, count, ibuf, ni, cpu_too ? vbuf : NULL);
     } else if (fvf_on_gpu) {
@@ -2421,10 +2459,12 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
             int rtw, rth;
             target_size(&rtw, &rth);
             squeeze = hud_squeeze_of((vbuf[0].pos[0] + 1.0f) * 0.5f * (float)rtw,
-                                     (vbuf[count - 1].pos[0] + 1.0f) * 0.5f * (float)rtw);
-            if (squeeze != 1.0f)
+                                     (vbuf[count - 1].pos[0] + 1.0f) * 0.5f * (float)rtw,
+                                     (1.0f - vbuf[0].pos[1]) * 0.5f * (float)rth,
+                                     (1.0f - vbuf[count - 1].pos[1]) * 0.5f * (float)rth);
+            if (squeeze.k != 1.0f)
                 for (uint32_t i = 0; i < count; i++)
-                    vbuf[i].pos[0] *= squeeze;
+                    squeeze_vertex(&vbuf[i], squeeze);
         }
         /* The game's vertex data, so interpolation can find this draw in
          * the next frame. */

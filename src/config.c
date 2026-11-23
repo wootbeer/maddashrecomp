@@ -525,7 +525,7 @@ void mdr_settings_log(void)
              "fixed function on %s, aspect %s%s, frame rate %d", s->render_scale2 / 2.0, s->msaa, s->fxaa,
              s->anisotropy, s->bloom, s->frame_interp, s->gpu_vertex ? "GPU" : "CPU", s->gpu_fixed ? "GPU" : "CPU",
              s->aspect == MDR_ASPECT_16_9 ? "16:9" : s->aspect == MDR_ASPECT_21_9 ? "21:9" : "4:3",
-             s->aspect == MDR_ASPECT_21_9 ? (s->hud_edges ? " (HUD edges)" : " (HUD centered)") : "",
+             s->aspect != MDR_ASPECT_4_3 ? (s->hud_edges ? " (HUD edges)" : " (HUD centered)") : "",
              s->fps30 ? 30 : 60);
     if (strcmp(line, last)) {
         SDL_Log("settings%s: %s", last[0] ? " changed" : "", line);
