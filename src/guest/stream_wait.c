@@ -37,3 +37,23 @@ void sub_001814F0(void)
         guest_cpu_yield_end(held);
     }
 }
+
+/* The same reader's "is this read done" (cdecl, the request at [esp+4]:
+ * 0 while its OVERLAPPED's status is STATUS_PENDING, 0x103), which
+ * 0x00181280 (draining every read in flight, on a seek or a close) calls in
+ * a loop with no kernel call: the same wait for the worker as above, met
+ * on the next race's loading screen (the main thread spinning here holding
+ * the guest CPU, the worker waiting to take it). Not done yet, from that
+ * loop (its other callers poll once): the CPU handed over for a moment. */
+extern void sub_00180C00_gen(void);
+void sub_00180C00(void)
+{
+    uint32_t ret = MEM32(g_esp);         /* only the draining loop's call spins */
+
+    sub_00180C00_gen();
+    if (!g_eax && ret == 0x001812B6u) {
+        int held = guest_cpu_yield_begin();
+        SDL_DelayNS(100000);
+        guest_cpu_yield_end(held);
+    }
+}
