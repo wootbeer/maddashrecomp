@@ -1090,6 +1090,13 @@ static uint64_t fs_key_of(const mdr_ff_uniforms *u, bool combiners, SDL_GPUShade
     return *sh ? key : 0;
 }
 
+/* The draw runs one program: unpaired, or paired with a draw of the same
+ * program (both frames' runs then fit its own shader; vsh.vert). */
+static bool one_program(const command *c)
+{
+    return c->vu.prev_prog[1] == 0 || c->vu.prev_prog[0] == c->vu.info[0];
+}
+
 /* The key of the program at base (count instructions, its code in progs)
  * when its own shader is ready, else 0 (asked for the first time). */
 static uint64_t spec_key_of(const uint32_t *progs, uint32_t nprogs, int32_t base, uint32_t count)
@@ -4266,6 +4273,23 @@ static void replay(SDL_GPUCommandBuffer *cmd)
     uint32_t bloom_at = UINT32_MAX;     /* the command after the frame's last 3D draw */
     int once = interp_once();
 
+    if (P && P != F && (!P->on_gpu || !P->vout_done)) {
+        /* The frame blended from was never shown on its own (the game
+         * made two frames between two pictures, or the window waited):
+         * on the GPU now, and its programs' outputs made, before this
+         * frame's (whose programs, the newer copy, then go up last).
+         * Without, its draws blended from what an older frame had left
+         * in its buffers -- or, from the vertex pre-pass, did not blend
+         * (Mad Dash's characters, running). */
+        frame_data *f = F;
+        F = P;
+        upload_frame(cmd);
+        if (!F->vout_done) {
+            F->vout_done = true;
+            vout_prepass(cmd);
+        }
+        F = f;
+    }
     upload_frame(cmd);
     prof_cut(&cmd, 4);      /* the uploads, and any wait the queue had before this frame */
     if (!F->vout_done) {    /* once a frame: its programs' vertices, for every time it is shown */
@@ -4375,7 +4399,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                 uint64_t vkey = 0, fkey;
                 bool stand_in;
                 SDL_GPUShader *svs = NULL, *sfs;
-                if (gpu == 1 && c->vu.prev_prog[1] == 0) {
+                if (gpu == 1 && one_program(c)) {
                     vkey = spec_key_of(F->progs, F->nprogs, c->vu.info[0], (uint32_t)c->vu.info[1]);
                     if (vkey)
                         svs = spec_shader_of(vkey);
@@ -4410,7 +4434,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                 /* A program without its own shader yet is drawn from the
                  * CPU's vertices below: no pipeline of the vertex interpreter
                  * with the setup's own shader (Turnip took 27 s over one). */
-                stand_in = gpu == 1 && c->vu.prev_prog[1] == 0 && !vkey && c->has_cpu
+                stand_in = gpu == 1 && one_program(c) && !vkey && c->has_cpu
                            && mdr_vsh_spec_enabled();
                 if ((vkey || fkey) && !find_pipeline(&ps) && !(fs_wait && (stand_in || (gpu == 1 && !vkey)))) {
                     if (!pipeline_failed(&ps)) {
@@ -4428,7 +4452,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                     else if (!fkey)
                         ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
                 }
-                if (gpu == 1 && c->vu.prev_prog[1] == 0) {
+                if (gpu == 1 && one_program(c)) {
                     if (ps.vsh_spec[0] || ps.vsh_spec[1]) {
                         settle(c->vu.info[0], true);
                     } else {
@@ -4580,7 +4604,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
             /* Not screen-space draws (the HUD, full-screen passes): a
              * storm layer over the whole screen tinted everything. */
             int tint = P && interp_tint && c->unpaired &&
-                       !(gpu != 1 && (F->fvf_us[c->fvf].layout0[2] & MDR_FVF_PRE));
+                       !(gpu == 2 && (F->fvf_us[c->fvf].layout0[2] & MDR_FVF_PRE));
             if (gpu == 1) {
                 c->vu.blend_t[0] = t;
                 c->vu.interp[2] = tint;
@@ -6279,13 +6303,17 @@ static void match_frames(frame_data *prev, frame_data *cur)
                          * frame, capture of a boost's end). Each frame's
                          * run is as the game drew it, and the outputs
                          * blend. */
-                        if (fs_wait) {
+                        if (fs_wait && pc->vu.info[0] != c->vu.info[0]) {
                             /* Only the vertex interpreter runs two programs,
                              * and with a custom driver its pipelines are
                              * not made (Turnip ran the RP6 out of memory
                              * over them, interpolating at 120 Hz): this
                              * frame's alone, not blended (a boost's end,
-                             * one frame). */
+                             * one frame). The same program with registers
+                             * jumped runs twice in its own shader (Mad
+                             * Dash's running characters move a few bone
+                             * registers that far every frame; left
+                             * unblended, they ran at the game's rate). */
                             c->vu.interp[0] = -1;
                             c->vu.interp[1] = 0;
                             memcpy(c->vu.prev_scale, c->vu.scale, sizeof c->vu.prev_scale);

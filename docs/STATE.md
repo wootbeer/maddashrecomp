@@ -63,7 +63,7 @@ window (`relaunch.c`, `mdr_guest_reboot`, patch 0047). Facts about the game and 
    effects (3D voices on the crosstalk mixbins), characters (no more
    tethers), 60 fps. Open there: music cut-outs (recheck now that the
    shaders run on the GPU; `MDR_DSOUND_TRACE=1` logs Process), the menus'
-   ambience against the music, Frame gen. ghosting on characters.
+   ambience against the music.
 3. A boot hung once on Windows (frame 2, `interp 1`, 6x): the main thread
    polls a file request with Sleep(0) (0x0018C620 loop: request +4 <
    wanted; pump 0x0017B290), the stream worker (0x00180D10) waits on its
@@ -71,15 +71,12 @@ window (`relaunch.c`, `mdr_guest_reboot`, patch 0047). Facts about the game and 
    via 0x000AD2EB), so the request's completion was never seen. Not seen
    in 8 cloud boots. Suspect: RECOMP_ASYNC_IO's STATUS_PENDING against
    XAPI's OVERLAPPED handling. Instrument if it repeats.
-4. Frame gen. ghosting (open): at t 0 the in-between frame should equal
-   the frame before, but moving models (skinned characters, the title's
-   gear) come out at or near the newest pose; static scenery matches.
-   Reproduced in the cloud: `--interp=1 MDR_CAPTURE=1450
-   MDR_CAPTURE_INTERP=1`, compare `_t000` with `_prev`. Checked: the
-   draws pair with their own (MDR_DBG_GROUPS: 4-5 of 192 registers
-   jumped), the earlier frame's constants reach the shader (zeroed, the
-   pig collapses), push order is not it. Next: whether `_prev` and the
-   blend's "earlier frame" use the same program and streams.
+4. Frame gen. ghosting: fixed in the cloud, to confirm on Windows. Two
+   causes: with `fs_wait` (on from the start on AMD's driver) a draw whose
+   bone registers jumped was left unblended (running characters, every
+   frame); and a frame never shown on its own was blended from without
+   its upload or vertex pre-pass. Check: `--interp=1 MDR_CAPTURE=2600
+   MDR_CAPTURE_INTERP=1` without `MDR_NO_DRAW`, `_t000` against `_prev`.
 5. Boot further (the cloud has a front-end subset of `media/`, uploaded by
    the owner; music `.str` files are not on the owner's listing), keep
    collecting `[ICALL] Failed`
