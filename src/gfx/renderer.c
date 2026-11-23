@@ -7003,16 +7003,6 @@ static bool shot_frame(const frame_data *f)
  * frame between prev and f at t (0 prev, 1 f). Captures and screenshots
  * are of frames as they are. */
 static double frame_interval = 1e9 / 59.94;    /* between game frames, smoothed */
-/* Interpolating, the blend runs this far behind the game frames' vblank
- * stamps: how late a frame is ready to show (handed over and paired), up
- * at once to a late one's and back down slowly. On the stamps alone, a
- * frame ready 2-20 ms after its stamp found the blend toward the one
- * before already at its end: the picture stood still that long and then
- * started the new blend that far in -- characters running in Mad Dash
- * looked as if frames were skipped (a 144 Hz screen, the game at 60). */
-static double show_delay;
-static uint32_t held_shown;     /* pictures the blend stood at an end (for the main loop's log) */
-#define SHOW_DELAY_MAX 33e6
 
 /* Frames in flight on the GPU, for the timing log (draw_frame_main). */
 static struct { SDL_GPUFence *fence; Uint64 submitted; } gpu_q[8];
@@ -7101,8 +7091,7 @@ static void draw_frame_main(frame_data *f, frame_data *prev, float t)
             double gap = prev ? (double)(f->stamp - prev->stamp) : 0;
             if (!(gap > 8e6 && gap < 70e6))
                 gap = frame_interval;
-            d = ((double)(SDL_GetTicksNS() - f->stamp) - show_delay) / gap;
-            held_shown += d < 0 || d > 1;
+            d = (double)(SDL_GetTicksNS() - f->stamp) / gap;
         }
         blend = t = (float)(d < 0 ? 0 : d > 1 ? 1 : d);
     }
@@ -7309,7 +7298,6 @@ static SDL_Condition *pair_cond;
 static SDL_Thread *pair_thread;
 static frame_data *pair_prev, *pair_cur;     /* the job (under pair_lock) */
 static bool pair_busy, pair_done;
-static Uint64 pair_done_ns;     /* when the pairing thread finished its last job */
 
 static int SDLCALL pair_main(void *unused)
 {
@@ -7322,7 +7310,6 @@ static int SDLCALL pair_main(void *unused)
         run_match(pair_prev, pair_cur);
         SDL_LockMutex(pair_lock);
         pair_done = true;
-        pair_done_ns = SDL_GetTicksNS();
         SDL_BroadcastCondition(pair_cond);
     }
     return 0;
@@ -7368,24 +7355,6 @@ static bool pair_finished(bool wait)
         pair_busy = false;
     SDL_UnlockMutex(pair_lock);
     return done;
-}
-
-/* A paired frame takes over (show_delay): how late it was ready. */
-static void note_ready(const frame_data *f)
-{
-    double late = (double)pair_done_ns - (double)f->stamp;
-    if (late < 0.0)
-        late = 0.0;
-    /* Under a game frame: one frame waits for its turn (held_next), and
-     * the next to come would take over early. */
-    if (late > SHOW_DELAY_MAX)
-        late = SHOW_DELAY_MAX;
-    if (late > frame_interval * 0.85)
-        late = frame_interval * 0.85;
-    if (late > show_delay)
-        show_delay = late;
-    else
-        show_delay += (late - show_delay) * 0.02;
 }
 
 void mdr_gfx_main_loop(void)
@@ -7441,15 +7410,12 @@ void mdr_gfx_main_loop(void)
             main_match_ns = (Uint64)SDL_SetAtomicU32(&pair_us, 0) * 1000;
             if (++log_n % 5 == 0)
                 SDL_Log("main: %.0f fps on screen, %.0f game frames; per second %.0f ms pairing%s, %.0f ms recording, "
-                        "%.0f ms waiting for the window, %.0f ms submitting; GPU about %.1f ms a frame; blending %s "
-                        "(%.1f ms behind, %u pictures held)",
+                        "%.0f ms waiting for the window, %.0f ms submitting; GPU about %.1f ms a frame; blending %s",
                         shown, games, main_match_ns / 1e6 / secs, pair_thread ? " (its own thread)" : "",
                         main_record_ns / 1e6 / secs, main_wait_ns / 1e6 / secs, main_submit_ns / 1e6 / secs,
                         gpu_frames ? gpu_busy_ns / 1e6 / gpu_frames : 0.0,
-                        !want ? "off" : interp_ok ? "on" : "held off", show_delay / 1e6,
-                        held_shown);
+                        !want ? "off" : interp_ok ? "on" : "held off");
             main_record_ns = main_wait_ns = main_submit_ns = gpu_busy_ns = main_match_ns = 0;
-            held_shown = 0;
             gpu_frames = 0;
             win_start = now;
             win_games = win_shown = ls_extra_shown = 0;
@@ -7487,7 +7453,6 @@ void mdr_gfx_main_loop(void)
         if (f && pair_finished(true)) {     /* the one before is paired: it takes over first */
             prev = cur;
             cur = held_next;
-            note_ready(cur);
             SDL_LockMutex(q_lock);
             held_prev = prev;
             held_cur = cur;
@@ -7552,13 +7517,9 @@ void mdr_gfx_main_loop(void)
                     continue;
             }
         }
-        /* Paired: the new pair takes over, once the blend toward the one
-         * before has run its course (show_delay). */
-        if (!f && held_next && (!interp || (double)SDL_GetTicksNS() >= (double)held_next->stamp + show_delay)
-            && pair_finished(false)) {
+        if (!f && pair_finished(false)) {   /* paired: the new pair takes over */
             prev = cur;
             cur = held_next;
-            note_ready(cur);
             SDL_LockMutex(q_lock);
             held_prev = prev;
             held_cur = cur;
