@@ -49,18 +49,50 @@ bool mdr_widescreen_needs_restart(void)
 
 void mdr_widescreen_frame(void) {}
 
+/* MDR_WIDE_SKIP=addr[,addr...]: cameras made from these return addresses
+ * keep 4:3 (finding which camera a stretched effect comes from). */
+static bool skipped(uint32_t ret)
+{
+    const char *e = SDL_getenv("MDR_WIDE_SKIP");
+    while (e && *e) {
+        char *end;
+        unsigned long a = SDL_strtoul(e, &end, 16);
+        if (end == e)
+            break;
+        if ((uint32_t)a == ret)
+            return true;
+        e = *end ? end + 1 : end;
+    }
+    return false;
+}
+
 /* The camera's constructor (this in ecx; field of view, aspect, near, far):
- * a camera made for 4:3 gets the setting's aspect. */
+ * a camera made for 4:3 gets the setting's aspect. Each caller's first
+ * camera is logged (its return address, for MDR_WIDE_SKIP). */
 extern void sub_000D4000_gen(void);
 void sub_000D4000(void)
 {
-    uint32_t cam = g_ecx;
-    float asked;
+    static uint32_t seen[16];
+    static int nseen;
+    uint32_t cam = g_ecx, ret = MEM32(g_esp);
+    float fov, asked, nearz, farz;
     int want = mdr_settings_get()->aspect;
+    bool widen, logged = false;
 
+    memcpy(&fov, (const void *)XBOX_PTR(g_esp + 4), 4);
     memcpy(&asked, (const void *)XBOX_PTR(g_esp + 8), 4);
+    memcpy(&nearz, (const void *)XBOX_PTR(g_esp + 12), 4);
+    memcpy(&farz, (const void *)XBOX_PTR(g_esp + 16), 4);
     sub_000D4000_gen();
-    if (asked > 1.33f && asked < 1.34f && want != MDR_ASPECT_4_3) {
+    widen = asked > 1.33f && asked < 1.34f && want != MDR_ASPECT_4_3 && !skipped(ret);
+    for (int i = 0; i < nseen; i++)
+        logged |= seen[i] == ret;
+    if (!logged && nseen < 16) {
+        seen[nseen++] = ret;
+        SDL_Log("widescreen: camera from %08X: fov %g aspect %g near %g far %g%s", ret, fov, asked, nearz, farz,
+                widen ? " -> widened" : "");
+    }
+    if (widen) {
         MEMF(cam + CAMERA_ASPECT) = ratio_of(want);
         if (made_for != want)
             SDL_Log("widescreen: cameras made at %s", want == MDR_ASPECT_21_9 ? "21:9" : "16:9");
