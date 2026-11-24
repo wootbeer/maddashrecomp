@@ -2219,38 +2219,54 @@ static bool timed_fvf(uint32_t fvf, uint32_t base, uint32_t stride, uint32_t fir
  * One as wide as the screen (a backdrop, a fade) stays as it is.
  *
  * About the middle (Display > HUD Centered: the 4:3 layout in the middle of
- * the screen), or with Edges, for a piece in the top or bottom third of the
- * screen: about the left edge if it lies in the left half, about the right
+ * the screen), or with Edges, in a race (its progress line drawn this frame
+ * or the last; menus stay as laid out), for a piece in the top or bottom
+ * third of the screen: about the left edge if it lies in the left half, about the right
  * edge if in the right half, so a group keeps its spacing (Mad Dash's
  * gauge, item box and counter, top left; the timer's pieces, top right);
- * about the middle if it crosses it, or lies over a piece that does (the
- * racers' icons on the progress line, over_wide). A frame that has drawn a 2D backdrop as wide and
+ * about the middle if it crosses it, or lies over a piece kept in the
+ * middle (the racers' icons on the progress line; over_wide). A frame that has drawn a 2D backdrop as wide and
  * as high as the screen is a menu or a loading screen: everything in it
  * about the middle, as laid out. The extent is over all the draw's
  * vertices, up to SPAN_MAX. */
 typedef struct squeeze_t { float k, at; } squeeze_t;    /* factor (1: none); anchor, clip x */
 
-/* HUD Edges: the pieces across the middle in the top and bottom thirds
- * (the race's progress line), kept there, this frame's and the last's, so a
- * small piece over one follows it (the racers' icons on the line) whatever
- * the order they are drawn in. */
-#define WIDE_MAX 8
-typedef struct wide_band { float lo[WIDE_MAX], hi[WIDE_MAX]; int n; } wide_band;
-static wide_band wide_now[2], wide_last[2];     /* [0] top third, [1] bottom */
+/* HUD Edges: the 2D pieces kept about the middle (across it, or not in
+ * the top or bottom third), this frame's and the last's, so a piece in
+ * those thirds lying over one follows it, whatever the order they are
+ * drawn in: the racers' icons on the progress line, and in a menu without
+ * a backdrop (the level select, over the 3D island) the last line of a
+ * panel reaching into the bottom third. */
+#define WIDE_MAX 32
+typedef struct wide_set { float r[WIDE_MAX][4]; int n; } wide_set;  /* lo, hi, top, bot */
+static wide_set wide_now, wide_last;
+static bool race_now, race_last;     /* the race's progress line drawn (submit_draw) */
 
 static void wide_frame(void)
 {
-    memcpy(wide_last, wide_now, sizeof wide_last);
-    memset(wide_now, 0, sizeof wide_now);
+    wide_last = wide_now;
+    wide_now.n = 0;
+    race_last = race_now;
+    race_now = false;
 }
 
-static bool over_wide(int band, float lo, float hi)
+static void wide_add(float lo, float hi, float top, float bot)
 {
-    const wide_band *b[2] = { &wide_now[band], &wide_last[band] };
+    if (wide_now.n < WIDE_MAX) {
+        float *r = wide_now.r[wide_now.n++];
+        r[0] = lo, r[1] = hi, r[2] = top, r[3] = bot;
+    }
+}
+
+static bool over_wide(float lo, float hi, float top, float bot)
+{
+    const wide_set *b[2] = { &wide_now, &wide_last };
     for (int k = 0; k < 2; k++)
-        for (int i = 0; i < b[k]->n; i++)
-            if (lo < b[k]->hi[i] && hi > b[k]->lo[i])
+        for (int i = 0; i < b[k]->n; i++) {
+            const float *r = b[k]->r[i];
+            if (lo < r[1] && hi > r[0] && top < r[3] && bot > r[2])
                 return true;
+        }
     return false;
 }
 
@@ -2271,20 +2287,12 @@ static squeeze_t hud_squeeze_of(float x0, float x1, float y0, float y1)
         return q;
     }
     q.k = (4.0f / 3.0f) / mdr_widescreen_ratio();
-    if (mdr_settings_get()->hud_edges && !backdrop_frame &&
-        (bot <= (float)rth / 3.0f || top >= 2.0f * (float)rth / 3.0f)) {
-        int band = top >= 2.0f * (float)rth / 3.0f;
+    if (mdr_settings_get()->hud_edges && !backdrop_frame && (race_now || race_last)) {
         mid = (float)rtw * 0.5f;
-        if (lo < mid && hi > mid) {
-            wide_band *b = &wide_now[band];
-            if (b->n < WIDE_MAX) {
-                b->lo[b->n] = lo;
-                b->hi[b->n] = hi;
-                b->n++;
-            }
-        } else if (!over_wide(band, lo, hi)) {
+        if (!(bot <= (float)rth / 3.0f || top >= 2.0f * (float)rth / 3.0f) || (lo < mid && hi > mid))
+            wide_add(lo, hi, top, bot);
+        else if (!over_wide(lo, hi, top, bot))
             q.at = hi <= mid ? -1.0f : 1.0f;
-        }
     }
     return q;
 }
@@ -2410,6 +2418,14 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
             squeeze_vertex(&vbuf[i], squeeze);
     }
     fill_draw_state(&d, pre);
+    if (d.tex[0].data && mdr_widescreen_active()) {
+        /* The race's progress line, its texture 512 x 8: a race on screen
+         * (HUD Edges, hud_squeeze_of). */
+        mdr_xtex_info ti;
+        mdr_xtex_describe(d.tex[0].format_word, d.tex[0].size_word, &ti);
+        if (ti.known && ti.width == 512 && ti.height == 8)
+            race_now = true;
+    }
     {   /* MDR_CAPTURE=frame: the render-state table around fog, once. */
         static long long cap = -2;
         if (cap == -2)
