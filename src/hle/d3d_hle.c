@@ -47,6 +47,7 @@
 #define DEV_VBLANK_CALLBACK 0x24ECu
 
 #define VBLANK_NS 16683333ull
+#define SPAN_MAX 64             /* a screen-space draw measured vertex by vertex up to this (mdr_gpu_vsh.span) */
 
 extern recomp_func_t recomp_lookup(uint32_t xbox_va);
 
@@ -1957,6 +1958,28 @@ static void vsh_gpu_job(const mdr_vsh_program *p, uint32_t base, uint32_t stride
             memcpy(g->anchor[k], out[VSH_OPOS], sizeof g->anchor[k]);
         }
         g->anchored = true;
+        /* A screen-space draw's extent over all its vertices (widescreen,
+         * hud_squeeze_of): by the first and last alone, a quad from its
+         * top left to its bottom left looked no wider than a line, and
+         * the full-screen quad that darkens Mad Dash's stencil shadows
+         * was squeezed to the middle -- the shadows cut off straight. */
+        g->spanned = false;
+        if (count <= SPAN_MAX && SDL_fabsf(g->anchor[0][3] - 1.0f) < 1e-4f &&
+            SDL_fabsf(g->anchor[1][3] - 1.0f) < 1e-4f) {
+            g->span[0] = SDL_min(g->anchor[0][0], g->anchor[1][0]);
+            g->span[1] = SDL_max(g->anchor[0][0], g->anchor[1][0]);
+            g->span[2] = SDL_min(g->anchor[0][1], g->anchor[1][1]);
+            g->span[3] = SDL_max(g->anchor[0][1], g->anchor[1][1]);
+            for (uint32_t i = 1; i + 1 < count; i++) {
+                vsh_inputs(&j, i, in);
+                mdr_vsh_run(p, (const float (*)[4])in, vconst, out);
+                g->span[0] = SDL_min(g->span[0], out[VSH_OPOS][0]);
+                g->span[1] = SDL_max(g->span[1], out[VSH_OPOS][0]);
+                g->span[2] = SDL_min(g->span[2], out[VSH_OPOS][1]);
+                g->span[3] = SDL_max(g->span[3], out[VSH_OPOS][1]);
+            }
+            g->spanned = true;
+        }
     }
 }
 
@@ -2197,7 +2220,8 @@ static bool timed_fvf(uint32_t fvf, uint32_t base, uint32_t stride, uint32_t fir
  * reach the right one, about the right edge for the mirror case (the race's
  * timer, place, gauges). A frame that has drawn a 2D backdrop as wide and
  * as high as the screen is a menu or a loading screen: everything in it
- * about the middle, as laid out. */
+ * about the middle, as laid out. The extent is over all the draw's
+ * vertices, up to SPAN_MAX. */
 typedef struct squeeze_t { float k, at; } squeeze_t;    /* factor (1: none); anchor, clip x */
 
 static squeeze_t hud_squeeze_of(float x0, float x1, float y0, float y1)
@@ -2210,7 +2234,9 @@ static squeeze_t hud_squeeze_of(float x0, float x1, float y0, float y1)
         return q;
     target_size(&rtw, &rth);
     if (lo <= 1.0f && hi >= (float)rtw - 2.0f) {
-        if (top <= 1.0f && bot >= (float)rth - 2.0f)
+        /* Not one through the stencil: the quad that darkens the
+         * stencil shadows covers every race frame. */
+        if (top <= 1.0f && bot >= (float)rth - 2.0f && !RS(RS_STENCILENABLE))
             backdrop_frame = true;
         return q;
     }
@@ -2430,8 +2456,8 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
     if (gpu_p) {
         mdr_gpu_vsh g;
         vsh_gpu_job(gpu_p, base, stride, first, count, &g);
-        if (g.anchored && SDL_fabsf(g.anchor[0][3] - 1.0f) < 1e-4f && SDL_fabsf(g.anchor[1][3] - 1.0f) < 1e-4f)
-            squeeze = hud_squeeze_of(g.anchor[0][0], g.anchor[1][0], g.anchor[0][1], g.anchor[1][1]);
+        if (g.spanned)
+            squeeze = hud_squeeze_of(g.span[0], g.span[1], g.span[2], g.span[3]);
         if (squeeze.k != 1.0f) {
             /* The renderer takes the viewport's transform back off oPos
              * (shaders/vsh.vert, to_clip: x = (oPos.x - offset) / scale,
@@ -2455,13 +2481,19 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
     } else {
         if (prog_selected && count && mdr_widescreen_active() &&
             SDL_fabsf(vbuf[0].pos[3] - 1.0f) < 1e-4f && SDL_fabsf(vbuf[count - 1].pos[3] - 1.0f) < 1e-4f) {
-            /* A program run on the CPU: screen space as on the GPU path. */
+            /* A program run on the CPU: screen space as on the GPU path,
+             * by the extent of all its vertices. */
             int rtw, rth;
+            float lx = 1e9f, hx = -1e9f, ly = 1e9f, hy = -1e9f;
             target_size(&rtw, &rth);
-            squeeze = hud_squeeze_of((vbuf[0].pos[0] + 1.0f) * 0.5f * (float)rtw,
-                                     (vbuf[count - 1].pos[0] + 1.0f) * 0.5f * (float)rtw,
-                                     (1.0f - vbuf[0].pos[1]) * 0.5f * (float)rth,
-                                     (1.0f - vbuf[count - 1].pos[1]) * 0.5f * (float)rth);
+            for (uint32_t i = 0; i < count; i++) {
+                lx = SDL_min(lx, vbuf[i].pos[0]);
+                hx = SDL_max(hx, vbuf[i].pos[0]);
+                ly = SDL_min(ly, vbuf[i].pos[1]);
+                hy = SDL_max(hy, vbuf[i].pos[1]);
+            }
+            squeeze = hud_squeeze_of((lx + 1.0f) * 0.5f * (float)rtw, (hx + 1.0f) * 0.5f * (float)rtw,
+                                     (1.0f - hy) * 0.5f * (float)rth, (1.0f - ly) * 0.5f * (float)rth);
             if (squeeze.k != 1.0f)
                 for (uint32_t i = 0; i < count; i++)
                     squeeze_vertex(&vbuf[i], squeeze);
