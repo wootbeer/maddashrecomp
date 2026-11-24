@@ -47,7 +47,7 @@
 #define DEV_VBLANK_CALLBACK 0x24ECu
 
 #define VBLANK_NS 16683333ull
-#define SPAN_MAX 64             /* a screen-space draw measured vertex by vertex up to this (mdr_gpu_vsh.span) */
+#define SPAN_MAX 64             /* a screen-space draw measured at most at this many vertices (mdr_gpu_vsh.span) */
 
 extern recomp_func_t recomp_lookup(uint32_t xbox_va);
 
@@ -55,6 +55,7 @@ static Uint64 epoch;              /* time of vblank 0 */
 static SDL_AtomicInt last_called;  /* last vblank whose callback has run */
 static uint32_t vblank_data;       /* guest D3DVBLANKDATA */
 static int swap_interval = 1;      /* vblanks per Present; 0 = immediate */
+static void wide_frame(void);        /* HUD Edges: the frame's long pieces start over (hud_squeeze_of) */
 static bool backdrop_frame;        /* widescreen: a full-screen 2D backdrop this frame (hud_squeeze_of) */
 
 
@@ -356,6 +357,7 @@ void sub_002473A0(void)
 
     mdr_widescreen_frame();
     backdrop_frame = false;
+    wide_frame();
     if (swap_interval > 0) {
         while (current_vblank() < last_vblank + (Uint64)swap_interval)
             wait_vblank_for(true);
@@ -1964,13 +1966,15 @@ static void vsh_gpu_job(const mdr_vsh_program *p, uint32_t base, uint32_t stride
          * the full-screen quad that darkens Mad Dash's stencil shadows
          * was squeezed to the middle -- the shadows cut off straight. */
         g->spanned = false;
-        if (count <= SPAN_MAX && SDL_fabsf(g->anchor[0][3] - 1.0f) < 1e-4f &&
-            SDL_fabsf(g->anchor[1][3] - 1.0f) < 1e-4f) {
+        if (SDL_fabsf(g->anchor[0][3] - 1.0f) < 1e-4f && SDL_fabsf(g->anchor[1][3] - 1.0f) < 1e-4f) {
+            /* Every vertex up to SPAN_MAX, else that many spread over the
+             * draw (a line of text: four vertices a letter). */
+            uint32_t step = count <= SPAN_MAX ? 1 : (count + SPAN_MAX - 1) / SPAN_MAX;
             g->span[0] = SDL_min(g->anchor[0][0], g->anchor[1][0]);
             g->span[1] = SDL_max(g->anchor[0][0], g->anchor[1][0]);
             g->span[2] = SDL_min(g->anchor[0][1], g->anchor[1][1]);
             g->span[3] = SDL_max(g->anchor[0][1], g->anchor[1][1]);
-            for (uint32_t i = 1; i + 1 < count; i++) {
+            for (uint32_t i = step; i + 1 < count; i += step) {
                 vsh_inputs(&j, i, in);
                 mdr_vsh_run(p, (const float (*)[4])in, vconst, out);
                 g->span[0] = SDL_min(g->span[0], out[VSH_OPOS][0]);
@@ -2218,11 +2222,36 @@ static bool timed_fvf(uint32_t fvf, uint32_t base, uint32_t stride, uint32_t fir
  * the screen), or with Edges, for a piece in the top or bottom third of the
  * screen: about the left edge if it lies in the left third and does not
  * reach the right one, about the right edge for the mirror case (the race's
- * timer, place, gauges). A frame that has drawn a 2D backdrop as wide and
+ * timer, place, gauges) -- unless it lies over a long piece kept about the
+ * middle (over_wide). A frame that has drawn a 2D backdrop as wide and
  * as high as the screen is a menu or a loading screen: everything in it
  * about the middle, as laid out. The extent is over all the draw's
  * vertices, up to SPAN_MAX. */
 typedef struct squeeze_t { float k, at; } squeeze_t;    /* factor (1: none); anchor, clip x */
+
+/* HUD Edges: the long pieces kept about the middle in the top and bottom
+ * thirds (the race's progress line), this frame's and the last's, so a
+ * small piece over one follows it (the racers' icons on the line) whatever
+ * the order they are drawn in. */
+#define WIDE_MAX 8
+typedef struct wide_band { float lo[WIDE_MAX], hi[WIDE_MAX]; int n; } wide_band;
+static wide_band wide_now[2], wide_last[2];     /* [0] top third, [1] bottom */
+
+static void wide_frame(void)
+{
+    memcpy(wide_last, wide_now, sizeof wide_last);
+    memset(wide_now, 0, sizeof wide_now);
+}
+
+static bool over_wide(int band, float lo, float hi)
+{
+    const wide_band *b[2] = { &wide_now[band], &wide_last[band] };
+    for (int k = 0; k < 2; k++)
+        for (int i = 0; i < b[k]->n; i++)
+            if (lo < b[k]->hi[i] && hi > b[k]->lo[i])
+                return true;
+    return false;
+}
 
 static squeeze_t hud_squeeze_of(float x0, float x1, float y0, float y1)
 {
@@ -2243,11 +2272,21 @@ static squeeze_t hud_squeeze_of(float x0, float x1, float y0, float y1)
     q.k = (4.0f / 3.0f) / mdr_widescreen_ratio();
     if (mdr_settings_get()->hud_edges && !backdrop_frame &&
         (bot <= (float)rth / 3.0f || top >= 2.0f * (float)rth / 3.0f)) {
+        int band = top >= 2.0f * (float)rth / 3.0f;
         w3 = (float)rtw / 3.0f;
-        if (lo < w3 && hi <= 2.0f * w3)
-            q.at = -1.0f;
-        else if (hi > 2.0f * w3 && lo >= w3)
-            q.at = 1.0f;
+        if (lo < w3 && hi > 2.0f * w3) {
+            wide_band *b = &wide_now[band];
+            if (b->n < WIDE_MAX) {
+                b->lo[b->n] = lo;
+                b->hi[b->n] = hi;
+                b->n++;
+            }
+        } else if (!over_wide(band, lo, hi)) {
+            if (lo < w3 && hi <= 2.0f * w3)
+                q.at = -1.0f;
+            else if (hi > 2.0f * w3 && lo >= w3)
+                q.at = 1.0f;
+        }
     }
     return q;
 }

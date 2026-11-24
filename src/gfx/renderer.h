@@ -203,8 +203,8 @@ typedef struct mdr_gpu_vsh {
     const uint8_t *consts_read;        /* a bit per one it really reads (NULL: all) */
     float    anchor[2][4];             /* oPos of the first and last vertex, run on the CPU */
     bool     anchored;                 /* (frame interpolation pairs alike draws by them) */
-    float    span[4];                  /* screen space (w 1 at both anchors) and at most
-                                        * SPAN_MAX vertices: oPos x, y lowest and highest */
+    float    span[4];                  /* screen space (w 1 at both anchors): oPos x, y lowest
+                                        * and highest (up to SPAN_MAX vertices, else a sample) */
     bool     spanned;
     const uint8_t *stream_data[16];    /* host pointer at the draw's first vertex */
     uint32_t stream_bytes[16];         /* 0: stream unused */
