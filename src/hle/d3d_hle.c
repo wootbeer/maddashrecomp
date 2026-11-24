@@ -2220,17 +2220,18 @@ static bool timed_fvf(uint32_t fvf, uint32_t base, uint32_t stride, uint32_t fir
  *
  * About the middle (Display > HUD Centered: the 4:3 layout in the middle of
  * the screen), or with Edges, for a piece in the top or bottom third of the
- * screen: about the left edge if it lies in the left third and does not
- * reach the right one, about the right edge for the mirror case (the race's
- * timer, place, gauges) -- unless it lies over a long piece kept about the
- * middle (over_wide). A frame that has drawn a 2D backdrop as wide and
+ * screen: about the left edge if it lies in the left half, about the right
+ * edge if in the right half, so a group keeps its spacing (Mad Dash's
+ * gauge, item box and counter, top left; the timer's pieces, top right);
+ * about the middle if it crosses it, or lies over a piece that does (the
+ * racers' icons on the progress line, over_wide). A frame that has drawn a 2D backdrop as wide and
  * as high as the screen is a menu or a loading screen: everything in it
  * about the middle, as laid out. The extent is over all the draw's
  * vertices, up to SPAN_MAX. */
 typedef struct squeeze_t { float k, at; } squeeze_t;    /* factor (1: none); anchor, clip x */
 
-/* HUD Edges: the long pieces kept about the middle in the top and bottom
- * thirds (the race's progress line), this frame's and the last's, so a
+/* HUD Edges: the pieces across the middle in the top and bottom thirds
+ * (the race's progress line), kept there, this frame's and the last's, so a
  * small piece over one follows it (the racers' icons on the line) whatever
  * the order they are drawn in. */
 #define WIDE_MAX 8
@@ -2256,7 +2257,7 @@ static bool over_wide(int band, float lo, float hi)
 static squeeze_t hud_squeeze_of(float x0, float x1, float y0, float y1)
 {
     squeeze_t q = { 1.0f, 0.0f };
-    float lo = SDL_min(x0, x1), hi = SDL_max(x0, x1), top = SDL_min(y0, y1), bot = SDL_max(y0, y1), w3;
+    float lo = SDL_min(x0, x1), hi = SDL_max(x0, x1), top = SDL_min(y0, y1), bot = SDL_max(y0, y1), mid;
     int rtw, rth;
 
     if (!mdr_widescreen_active())
@@ -2273,8 +2274,8 @@ static squeeze_t hud_squeeze_of(float x0, float x1, float y0, float y1)
     if (mdr_settings_get()->hud_edges && !backdrop_frame &&
         (bot <= (float)rth / 3.0f || top >= 2.0f * (float)rth / 3.0f)) {
         int band = top >= 2.0f * (float)rth / 3.0f;
-        w3 = (float)rtw / 3.0f;
-        if (lo < w3 && hi > 2.0f * w3) {
+        mid = (float)rtw * 0.5f;
+        if (lo < mid && hi > mid) {
             wide_band *b = &wide_now[band];
             if (b->n < WIDE_MAX) {
                 b->lo[b->n] = lo;
@@ -2282,10 +2283,7 @@ static squeeze_t hud_squeeze_of(float x0, float x1, float y0, float y1)
                 b->n++;
             }
         } else if (!over_wide(band, lo, hi)) {
-            if (lo < w3 && hi <= 2.0f * w3)
-                q.at = -1.0f;
-            else if (hi > 2.0f * w3 && lo >= w3)
-                q.at = 1.0f;
+            q.at = hi <= mid ? -1.0f : 1.0f;
         }
     }
     return q;
