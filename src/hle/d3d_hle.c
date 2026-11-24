@@ -2220,23 +2220,20 @@ static bool timed_fvf(uint32_t fvf, uint32_t base, uint32_t stride, uint32_t fir
  *
  * About the middle (Display > HUD Centered: the 4:3 layout in the middle of
  * the screen), or with Edges, in a race (its progress line drawn this frame
- * or the last; menus stay as laid out), for a piece in the top or bottom
- * third of the screen: about the left edge if it lies in the left half, about the right
- * edge if in the right half, so a group keeps its spacing (Mad Dash's
- * gauge, item box and counter, top left; the timer's pieces, top right);
- * about the middle if it crosses it, or lies over a piece kept in the
- * middle (the racers' icons on the progress line; over_wide). A frame that has drawn a 2D backdrop as wide and
- * as high as the screen is a menu or a loading screen: everything in it
- * about the middle, as laid out. The extent is over all the draw's
+ * or the last; menus stay as laid out), for a piece in the top third and the
+ * left half: about the left edge, so the group keeps its spacing (Mad
+ * Dash's gauge, item box and counter), unless it lies over a piece kept in
+ * the middle (a pause panel; over_wide). The rest of the race HUD (the
+ * place, the progress line and its racers, the timer) stays as laid out:
+ * pinned to the edges, the place's figure left its bubble. A frame that
+ * has drawn a 2D backdrop as wide and as high as the screen is a menu or a
+ * loading screen: everything in it about the middle, as laid out. The extent is over all the draw's
  * vertices, up to SPAN_MAX. */
 typedef struct squeeze_t { float k, at; } squeeze_t;    /* factor (1: none); anchor, clip x */
 
-/* HUD Edges: the 2D pieces kept about the middle (across it, or not in
- * the top or bottom third), this frame's and the last's, so a piece in
- * those thirds lying over one follows it, whatever the order they are
- * drawn in: the racers' icons on the progress line, and in a menu without
- * a backdrop (the level select, over the 3D island) the last line of a
- * panel reaching into the bottom third. */
+/* HUD Edges: the 2D pieces kept about the middle, this frame's and the
+ * last's, so a top-left piece lying over one stays with it, whatever the
+ * order they are drawn in (a panel's lines over its background). */
 #define WIDE_MAX 32
 typedef struct wide_set { float r[WIDE_MAX][4]; int n; } wide_set;  /* lo, hi, top, bot */
 static wide_set wide_now, wide_last;
@@ -2289,10 +2286,10 @@ static squeeze_t hud_squeeze_of(float x0, float x1, float y0, float y1)
     q.k = (4.0f / 3.0f) / mdr_widescreen_ratio();
     if (mdr_settings_get()->hud_edges && !backdrop_frame && (race_now || race_last)) {
         mid = (float)rtw * 0.5f;
-        if (!(bot <= (float)rth / 3.0f || top >= 2.0f * (float)rth / 3.0f) || (lo < mid && hi > mid))
+        if (!(bot <= (float)rth / 3.0f && hi <= mid))
             wide_add(lo, hi, top, bot);
         else if (!over_wide(lo, hi, top, bot))
-            q.at = hi <= mid ? -1.0f : 1.0f;
+            q.at = -1.0f;
     }
     return q;
 }

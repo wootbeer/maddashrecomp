@@ -1081,7 +1081,7 @@ static const char *help_of(int item)
     case ITEM_ASPECT:
         return mdr_widescreen_needs_restart() ? "Takes effect at the next race." : "Wider shows more to the sides.";
     case ITEM_FIT:    return "Bars, stretched or zoomed.";
-    case ITEM_HUD:    return "Wide: race HUD at the edges.";
+    case ITEM_HUD:    return "Wide: race gauge in the corner.";
     case ITEM_MOVIES: {
         static const char *helps[MDR_MOVIE_COUNT] = { "As the game frames it.", "The whole film, its own shape.",
                                                       "Film stretched to the window.", "Film fills; edges cut off." };
