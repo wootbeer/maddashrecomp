@@ -1934,6 +1934,51 @@ static void vsh_constants(const mdr_vsh_program *p, float scale[3], float offset
 /* The same draw for shaders/vsh.vert: the constants, the viewport
  * transform, and the streams the program reads as the game's bytes from
  * the draw's first vertex on. */
+/* Text the game placed through the camera (camera_placed): the point it
+ * was placed by, from its rows -- vertices at one height, x lowest and
+ * highest. Rows of different widths that start together are left-aligned
+ * text, that end together right-aligned, else centred; one row (or rows
+ * all as wide), its middle. In x as given (pixels or clip). */
+typedef struct text_rows { float y[16], lo[16], hi[16]; int n; } text_rows;
+
+static void rows_add(text_rows *t, float x, float y)
+{
+    int i;
+    for (i = 0; i < t->n; i++)
+        if (SDL_fabsf(t->y[i] - y) < 0.5f)
+            break;
+    if (i == t->n) {
+        if (t->n == 16)
+            return;
+        t->y[i] = y;
+        t->lo[i] = t->hi[i] = x;
+        t->n++;
+    }
+    t->lo[i] = SDL_min(t->lo[i], x);
+    t->hi[i] = SDL_max(t->hi[i], x);
+}
+
+static float rows_anchor(const text_rows *t, float tol)
+{
+    bool left = true, right = true, wide = false;
+    float lo = 3.4e38f, hi = -3.4e38f;
+    for (int i = 0; i < t->n; i++) {
+        lo = SDL_min(lo, t->lo[i]);
+        hi = SDL_max(hi, t->hi[i]);
+        left = left && SDL_fabsf(t->lo[i] - t->lo[0]) <= tol;
+        right = right && SDL_fabsf(t->hi[i] - t->hi[0]) <= tol;
+        wide = wide || SDL_fabsf((t->hi[i] - t->lo[i]) - (t->hi[0] - t->lo[0])) > 2.0f * tol;
+    }
+    if (wide && left)
+        return lo;
+    if (wide && right)
+        return hi;
+    return (lo + hi) * 0.5f;
+}
+
+static bool want_text_anchor;   /* submit_draw: the next vsh_gpu_job finds it (text_anchor) */
+static float text_anchor;       /* pixels */
+
 static void vsh_gpu_job(const mdr_vsh_program *p, uint32_t base, uint32_t stride, uint32_t first,
                         uint32_t count, mdr_gpu_vsh *g)
 {
@@ -2011,6 +2056,16 @@ static void vsh_gpu_job(const mdr_vsh_program *p, uint32_t base, uint32_t stride
                 g->span[3] = SDL_max(g->span[3], out[VSH_OPOS][1]);
             }
             g->spanned = true;
+            if (want_text_anchor) {     /* every vertex: its rows */
+                text_rows t;
+                t.n = 0;
+                for (uint32_t i = 0; i < count && i < 4096; i++) {
+                    vsh_inputs(&j, i, in);
+                    mdr_vsh_run(p, (const float (*)[4])in, vconst, out);
+                    rows_add(&t, out[VSH_OPOS][0], out[VSH_OPOS][1]);
+                }
+                text_anchor = t.n ? rows_anchor(&t, 1.5f) : (g->span[0] + g->span[1]) * 0.5f;
+            }
         }
     }
 }
@@ -2330,8 +2385,9 @@ static squeeze_t hud_squeeze_of(float x0, float x1, float y0, float y1)
  * 4:3 over the screen's shape (0x00305418: 2.80 at 4:3, 2.10 at 16:9), so
  * they arrive narrowed already; squeezed as well, they sat inside their 3D
  * frames by that much again. Their size is the game's pixels, though: such
- * a draw is narrowed about its own middle, which stays where the camera put
- * it. Fixed 2D (the race HUD, the title) comes from
+ * a draw is narrowed about the point it was placed by (rows_anchor: the
+ * left edge of left-aligned lines, the middle of centred ones), which stays
+ * where the camera put it. Fixed 2D (the race HUD, the title) comes from
  * the display list's vertex arrays, and the only such quad in a race is the
  * full-screen one that darkens the stencil shadows (left as it is). */
 static bool camera_placed(const mdr_draw *d)
@@ -2566,14 +2622,16 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
     ni = build_indices(type, order, n, ibuf, &d.ps.topology);
     if (gpu_p) {
         mdr_gpu_vsh g;
+        want_text_anchor = mdr_widescreen_active() && camera_placed(&d);
         vsh_gpu_job(gpu_p, base, stride, first, count, &g);
         if (g.spanned)
             squeeze = hud_squeeze_of(g.span[0], g.span[1], g.span[2], g.span[3]);
-        if (g.spanned && squeeze.k != 1.0f && camera_placed(&d)) {
+        if (g.spanned && squeeze.k != 1.0f && want_text_anchor) {
             int rtw, rth;
             target_size(&rtw, &rth);
-            squeeze.at = (g.span[0] + g.span[1]) / (float)rtw - 1.0f;   /* about its own middle */
+            squeeze.at = text_anchor * 2.0f / (float)rtw - 1.0f;   /* about the point it was placed by */
         }
+        want_text_anchor = false;
         if (squeeze.k != 1.0f) {
             /* The renderer takes the viewport's transform back off oPos
              * (shaders/vsh.vert, to_clip: x = (oPos.x - offset) / scale,
@@ -2612,8 +2670,13 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
             }
             squeeze = hud_squeeze_of((lx + 1.0f) * 0.5f * (float)rtw, (hx + 1.0f) * 0.5f * (float)rtw,
                                      (1.0f - hy) * 0.5f * (float)rth, (1.0f - ly) * 0.5f * (float)rth);
-            if (squeeze.k != 1.0f && camera_placed(&d))
-                squeeze.at = (lx + hx) * 0.5f;      /* about its own middle (clip x) */
+            if (squeeze.k != 1.0f && camera_placed(&d)) {   /* about the point it was placed by (clip x) */
+                text_rows t;
+                t.n = 0;
+                for (uint32_t i = 0; i < count; i++)
+                    rows_add(&t, vbuf[i].pos[0], vbuf[i].pos[1] * (float)rth * 0.5f);
+                squeeze.at = rows_anchor(&t, 3.0f / (float)rtw);
+            }
             if (squeeze.k != 1.0f)
                 for (uint32_t i = 0; i < count; i++)
                     squeeze_vertex(&vbuf[i], squeeze);
