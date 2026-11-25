@@ -2322,6 +2322,23 @@ static squeeze_t hud_squeeze_of(float x0, float x1, float y0, float y1)
     return q;
 }
 
+/* 2D the game placed through the camera: the menus' queued quads (Records'
+ * figures, Options' values, the character select's name and description),
+ * drawn at the frame's end (0x00121E60 -> 0x001E8E80) through the display
+ * list's immediate mode (Begin/End, returning to 0x001ED0F5). Their places
+ * come from the projection, whose x scale the wide camera narrows by
+ * 4:3 over the screen's shape (0x00305418: 2.80 at 4:3, 2.10 at 16:9), so
+ * they arrive narrowed already; squeezed as well, they sat inside their 3D
+ * frames by that much again. Their size is the game's pixels, though: such
+ * a draw is narrowed about its own middle, which stays where the camera put
+ * it. Fixed 2D (the race HUD, the title) comes from
+ * the display list's vertex arrays, and the only such quad in a race is the
+ * full-screen one that darkens the stencil shadows (left as it is). */
+static bool camera_placed(const mdr_draw *d)
+{
+    return d->caller[0] == 0x001ED0F5u && d->caller[1] == 0x00121F7Cu;
+}
+
 /* A squeezed draw's scissor, squeezed with it (about the same point, in
  * the target's pixels): a window around a piece of HUD or menu stays
  * around it. */
@@ -2552,6 +2569,11 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
         vsh_gpu_job(gpu_p, base, stride, first, count, &g);
         if (g.spanned)
             squeeze = hud_squeeze_of(g.span[0], g.span[1], g.span[2], g.span[3]);
+        if (g.spanned && squeeze.k != 1.0f && camera_placed(&d)) {
+            int rtw, rth;
+            target_size(&rtw, &rth);
+            squeeze.at = (g.span[0] + g.span[1]) / (float)rtw - 1.0f;   /* about its own middle */
+        }
         if (squeeze.k != 1.0f) {
             /* The renderer takes the viewport's transform back off oPos
              * (shaders/vsh.vert, to_clip: x = (oPos.x - offset) / scale,
@@ -2590,6 +2612,8 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
             }
             squeeze = hud_squeeze_of((lx + 1.0f) * 0.5f * (float)rtw, (hx + 1.0f) * 0.5f * (float)rtw,
                                      (1.0f - hy) * 0.5f * (float)rth, (1.0f - ly) * 0.5f * (float)rth);
+            if (squeeze.k != 1.0f && camera_placed(&d))
+                squeeze.at = (lx + hx) * 0.5f;      /* about its own middle (clip x) */
             if (squeeze.k != 1.0f)
                 for (uint32_t i = 0; i < count; i++)
                     squeeze_vertex(&vbuf[i], squeeze);
