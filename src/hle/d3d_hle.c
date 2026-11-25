@@ -2389,10 +2389,13 @@ static squeeze_t hud_squeeze_of(float x0, float x1, float y0, float y1)
  * left edge of left-aligned lines, the middle of centred ones), which stays
  * where the camera put it. Fixed 2D (the race HUD, the title) comes from
  * the display list's vertex arrays, and the only such quad in a race is the
- * full-screen one that darkens the stencil shadows (left as it is). */
-static bool camera_placed(const mdr_draw *d)
+ * full-screen one that darkens the stencil shadows (left as it is). Text
+ * only -- two quads or more: the same path draws the save popup's box and
+ * its edge lines, laid out fixed, one quad each (the lines, left where the
+ * camera would have put them, stood off the box). */
+static bool camera_placed(const mdr_draw *d, uint32_t count)
 {
-    return d->caller[0] == 0x001ED0F5u && d->caller[1] == 0x00121F7Cu;
+    return d->caller[0] == 0x001ED0F5u && d->caller[1] == 0x00121F7Cu && count >= 8;
 }
 
 /* A squeezed draw's scissor, squeezed with it (about the same point, in
@@ -2622,7 +2625,7 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
     ni = build_indices(type, order, n, ibuf, &d.ps.topology);
     if (gpu_p) {
         mdr_gpu_vsh g;
-        want_text_anchor = mdr_widescreen_active() && camera_placed(&d);
+        want_text_anchor = mdr_widescreen_active() && camera_placed(&d, count);
         vsh_gpu_job(gpu_p, base, stride, first, count, &g);
         if (g.spanned)
             squeeze = hud_squeeze_of(g.span[0], g.span[1], g.span[2], g.span[3]);
@@ -2670,7 +2673,7 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
             }
             squeeze = hud_squeeze_of((lx + 1.0f) * 0.5f * (float)rtw, (hx + 1.0f) * 0.5f * (float)rtw,
                                      (1.0f - hy) * 0.5f * (float)rth, (1.0f - ly) * 0.5f * (float)rth);
-            if (squeeze.k != 1.0f && camera_placed(&d)) {   /* about the point it was placed by (clip x) */
+            if (squeeze.k != 1.0f && camera_placed(&d, count)) {   /* about the point it was placed by (clip x) */
                 text_rows t;
                 t.n = 0;
                 for (uint32_t i = 0; i < count; i++)
