@@ -188,6 +188,9 @@ typedef struct command {
     uint32_t vbase;
     int32_t prev_vbase;
     bool unpaired;
+    /* A vertex-program draw left unpaired whose constants blend with a
+     * draw of its program in the frame before (pair_constants). */
+    bool consts_only;
     /* Fixed-function: how its matrices (wvp, then world) moved since its
      * partner in the frame before (has_mvel), to guess where it is next
      * (draw_distance). */
@@ -207,6 +210,7 @@ typedef struct command {
     /* Vertex programs: where the vertex pre-pass put its vertices' outputs
      * in the frame's gvout (-1: not made there), and how many (vout_prepass) */
     int32_t  vout_base;
+    int32_t  vout_alt;        /* consts_only: its outputs on the frame before's constants (vout_prepass) */
     uint32_t vout_n;
     float    anchor[8];       /* vertex programs: oPos of the first and last vertex (mdr_gpu_vsh) */
     bool     anchored;
@@ -735,6 +739,7 @@ void mdr_gfx_draw_vsh(const mdr_draw *d, const mdr_gpu_vsh *g, uint32_t nv,
     memcpy(c->vu.offset, g->vp_offset, sizeof c->vu.offset);
     c->vu.blend_t[1] = (float)g->points;
     c->vout_base = -1;
+    c->vout_alt = -1;
     c->vout_n = g->points ? nv / 4 : nv;
     if (g->points) {
         int32_t mx;
@@ -3177,6 +3182,9 @@ static void bind_geometry(SDL_GPURenderPass *pass, int gpu, const command *c)
     } else if (gpu == 3) {      /* the vertex pre-pass's outputs, and the frame before's */
         SDL_GPUBuffer *sb[2] = { F->gvout, P && P->gvout ? P->gvout : F->gvout };
         SDL_BindGPUVertexStorageBuffers(pass, 0, sb, 2);
+    } else if (gpu == 4) {      /* the pre-pass's outputs, both from this frame (vout_alt) */
+        SDL_GPUBuffer *sb[2] = { F->gvout, F->gvout };
+        SDL_BindGPUVertexStorageBuffers(pass, 0, sb, 2);
     } else {
         /* From the draw's first vertex (drawn with a vertex offset taking
          * it back off the indices); slot 1 the paired draw's, or its own. */
@@ -3835,7 +3843,7 @@ static SDL_GPUComputePipeline *comp_of(uint64_t vkey, const uint32_t *code, uint
 
 static void vout_prepass(SDL_GPUCommandBuffer *cmd)
 {
-    static struct { uint32_t cmd; SDL_GPUComputePipeline *p; } *jobs;
+    static struct { uint32_t cmd; SDL_GPUComputePipeline *p; bool alt; } *jobs;
     static uint32_t cap_jobs;
     uint32_t njobs = 0, total = 0;
     SDL_GPUComputePass *pass;
@@ -3861,12 +3869,26 @@ static void vout_prepass(SDL_GPUCommandBuffer *cmd)
                           ? F->progs + (size_t)c->vu.info[0] * 4 : NULL, (uint32_t)c->vu.info[1], &st);
         if (!p)
             continue;
-        jobs = grow(jobs, &cap_jobs, njobs + 1, sizeof *jobs);
+        jobs = grow(jobs, &cap_jobs, njobs + 2, sizeof *jobs);
         jobs[njobs].cmd = i;
         jobs[njobs].p = p;
+        jobs[njobs].alt = false;
         njobs++;
         c->vout_base = (int32_t)total;
         total += c->vout_n;
+        /* Blended by its constants alone (pair_constants): again on the
+         * frame before's constants and viewport, the two outputs blended
+         * vertex by vertex where it is drawn (its own vertices both
+         * times). Not for the frame blended from made late (F is P). */
+        if (c->consts_only && P && P != F && c->vu.interp[0] >= 0
+            && (uint32_t)c->vu.interp[0] + 192 <= P->nvconsts) {
+            jobs[njobs].cmd = i;
+            jobs[njobs].p = p;
+            jobs[njobs].alt = true;
+            njobs++;
+            c->vout_alt = (int32_t)total;
+            total += c->vout_n;
+        }
     }
     if (!njobs)
         return;
@@ -3874,7 +3896,7 @@ static void vout_prepass(SDL_GPUCommandBuffer *cmd)
                              SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE | SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ);
     if (!F->gvout) {
         for (uint32_t k = 0; k < njobs; k++)
-            F->cmds[jobs[k].cmd].vout_base = -1;
+            F->cmds[jobs[k].cmd].vout_base = F->cmds[jobs[k].cmd].vout_alt = -1;
         return;
     }
     {
@@ -3892,11 +3914,18 @@ static void vout_prepass(SDL_GPUCommandBuffer *cmd)
             bound = jobs[k].p;
         }
         u.interp[0] = (int32_t)c->vout_n;
-        u.interp[1] = c->vout_base;
+        u.interp[1] = jobs[k].alt ? c->vout_alt : c->vout_base;
         u.info[3] = depth_rev;
         u.blend_t[0] = 1.0f;
+        if (jobs[k].alt) {
+            memcpy(u.scale, c->vu.prev_scale, sizeof u.scale);
+            memcpy(u.offset, c->vu.prev_offset, sizeof u.offset);
+        }
         SDL_PushGPUComputeUniformData(cmd, 0, &u, sizeof u);
-        if (c->vu.info[2] != pushed) {
+        if (jobs[k].alt) {
+            SDL_PushGPUComputeUniformData(cmd, 1, P->vconsts[c->vu.interp[0]], 192 * 16);
+            pushed = -2;        /* another frame's: this frame's pushed again next */
+        } else if (c->vu.info[2] != pushed) {
             SDL_PushGPUComputeUniformData(cmd, 1, F->vconsts[c->vu.info[2]], 192 * 16);
             pushed = c->vu.info[2];
         }
@@ -4321,7 +4350,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
         SDL_GPUGraphicsPipeline *p;
         SDL_GPUTextureSamplerBinding tsb[4];
         SDL_GPUViewport vp;
-        int gpu;
+        int gpu, bind;
 
         if (i >= replay_limit)
             break;
@@ -4563,9 +4592,12 @@ static void replay(SDL_GPUCommandBuffer *cmd)
             rec.vp = vp;
             rec.vp_set = true;
         }
-        if (gpu == 0 || rec.gpu != gpu) {     /* the CPU's vertices: at the draw's own place */
-            bind_geometry(pass, gpu, c);
-            rec.gpu = gpu;
+        /* A pre-pass draw blended by its constants alone: both outputs in
+         * this frame's buffer (bound as 4, drawn as 3). */
+        bind = gpu == 3 && c->consts_only && c->vout_alt >= 0 && P && blend < 1.0f ? 4 : gpu;
+        if (gpu == 0 || rec.gpu != bind) {     /* the CPU's vertices: at the draw's own place */
+            bind_geometry(pass, bind, c);
+            rec.gpu = bind;
         }
         for (int s = 0; s < 4; s++) {
             tsb[s].texture = tex[s];
@@ -4579,11 +4611,11 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                 pass = begin_pass(cmd, NULL);
                 SDL_BindGPUGraphicsPipeline(pass, p);
                 SDL_SetGPUViewport(pass, &vp);
-                bind_geometry(pass, gpu, c);
+                bind_geometry(pass, bind, c);
                 rec.p = p;
                 rec.vp = vp;
                 rec.vp_set = true;
-                rec.gpu = gpu;
+                rec.gpu = bind;
             }
         }
         {   /* The game's scissor (the window clip), scaled as the viewport;
@@ -4645,6 +4677,10 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                 u.base[0] = c->vout_base;
                 u.base[1] = pc && pc->vsh && pc->vout_base >= 0 ? pc->vout_base : -1;
                 u.base[2] = u.base[1] >= 0 ? (int32_t)pc->vout_n : 0;
+                if (bind == 4) {        /* its outputs on the frame before's constants */
+                    u.base[1] = c->vout_alt;
+                    u.base[2] = (int32_t)c->vout_n;
+                }
                 u.base[3] = tint;
                 u.t[0] = t;
                 u.t[1] = c->vu.blend_t[1];
@@ -5933,6 +5969,91 @@ static bool reads_target(const frame_data *f, const command *c)
 static Uint64 mf_ns[6];
 #define MF_MARK(i) do { Uint64 _t = SDL_GetTicksNS(); mf_ns[i] = _t - mf_t0; mf_t0 = _t; } while (0)
 
+/* 3D vertex-program draws left unpaired, rebuilt every frame (Mad Dash's
+ * stencil shadow volumes, made anew from each character's outline): their
+ * vertices match nothing in the frame before, so they showed as the game
+ * drew them, the newest camera included, while everything else blended --
+ * the shadows of running characters jumped a frame ahead of their bodies
+ * at the game's rate (and the water, its waves made anew each frame). Each
+ * is given the constants of a draw of its program in the frame before
+ * whose registers it reads are all within a tenth of its own (the same
+ * camera, moved a little; another object's transform is further off): its
+ * own vertices through both frames' constants, blended. The vertex
+ * pre-pass runs such a draw twice, the second time on those constants
+ * (vout_alt); drawn by the vertex interpreter or its own shader, the
+ * constants blend (interp.y 0: its own streams alone). It stays on the
+ * path it has either way: moved off the pre-pass (ea63d88, reverted),
+ * these draws flickered on AMD, where the other path's pipelines are made
+ * in the background. */
+static void pair_constants(const frame_data *prev, frame_data *cur)
+{
+    uint32_t n = 0;
+
+    for (uint32_t k = 0; k < cur->ncmds; k++) {
+        command *c = &cur->cmds[k];
+        int32_t best = -1;
+        float best_d = 3.4e38f;
+        const float *cb;
+
+        if (c->kind != CMD_DRAW || !c->vsh || !c->unpaired || c->vu.info[0] < 0 || c->vu.info[2] < 0 ||
+            (uint32_t)c->vu.info[2] + 192 > cur->nvconsts || c->vu.blend_t[1] != 0.0f || !is_3d(cur, c))
+            continue;
+        cb = cur->vconsts[c->vu.info[2]];
+        for (uint32_t m = 0; m < prev->ncmds; m++) {
+            const command *pc = &prev->cmds[m];
+            const float *ca;
+            float d = 0.0f;
+            bool close = true;
+            if (pc->kind != CMD_DRAW || !pc->vsh || pc->vu.info[0] != c->vu.info[0] || pc->vu.info[2] < 0 ||
+                (uint32_t)pc->vu.info[2] + 192 > prev->nvconsts)
+                continue;
+            ca = prev->vconsts[pc->vu.info[2]];
+            for (int q = 0; q < 192 && close; q++) {
+                float dq = 0.0f, mq = 0.0f;
+                if (!(c->consts_read[q >> 3] >> (q & 7) & 1))
+                    continue;
+                for (int e = 0; e < 4; e++) {
+                    float x = ca[4 * q + e], y = cb[4 * q + e];
+                    if (!(SDL_fabsf(x) < 1e6f && SDL_fabsf(y) < 1e6f)) {
+                        close = false;
+                        break;
+                    }
+                    dq += SDL_fabsf(x - y);
+                    mq += SDL_fabsf(x) + SDL_fabsf(y);
+                }
+                close = close && dq <= 0.1f * mq + 1e-3f;
+                d += dq;
+            }
+            if (close && d < best_d) {
+                best_d = d;
+                best = (int32_t)m;
+            }
+        }
+        if (best < 0)
+            continue;
+        {
+            const command *pc = &prev->cmds[best];
+            c->vu.interp[0] = pc->vu.info[2];
+            c->vu.interp[1] = 0;        /* its own streams alone */
+            memcpy(c->vu.prev_scale, pc->vu.scale, sizeof c->vu.prev_scale);
+            memcpy(c->vu.prev_offset, pc->vu.offset, sizeof c->vu.prev_offset);
+            c->consts_only = true;
+            n++;
+        }
+    }
+    {
+        static uint64_t win;
+        static uint32_t logs;
+        if (cur->frame >= win + 600) {
+            win = cur->frame;
+            logs = 0;
+        }
+        if (n && logs++ < 1)
+            SDL_Log("interp: frame %llu: %u unpaired program draws blended by their constants alone",
+                    (unsigned long long)cur->frame, n);
+    }
+}
+
 static void match_frames(frame_data *prev, frame_data *cur)
 {
     Uint64 mf_t0 = SDL_GetTicksNS();
@@ -5964,6 +6085,7 @@ static void match_frames(frame_data *prev, frame_data *cur)
         c->has_mvel = false;
         c->strayed = false;
         c->no_partner = false;
+        c->consts_only = false;
         if (c->vsh) {
             c->vu.interp[0] = -1;
             c->vu.interp[1] = 0;
@@ -6858,6 +6980,7 @@ static void match_frames(frame_data *prev, frame_data *cur)
                     (unsigned long long)cur->frame, n_progswitch, n_outblend, n_screen, n3, txt);
         }
     }
+    pair_constants(prev, cur);
     MF_MARK(4);
     /* A camera cut: most things jumped. Show the new frame as it is. */
     {   /* A camera cut: over half of those on screen jumped. */
