@@ -83,12 +83,13 @@ window (`relaunch.c`, `mdr_guest_reboot`, patch 0047). Facts about the game and 
    draws only.
    Widescreen: cameras widened at construction, 2D squeezed back
    (menus wide, as the owner prefers; 4:3 menus were tried, a904f4a).
-   Open: the character select places its text through the camera's view
-   width (its name and description sit where squeezing twice puts them,
-   against xemu); the layout code is not found yet (0x1E7800 prints at
-   normalised coordinates, 0x1E67B0 sets up sub-views). HUD Edges moves the
+   Menu text placed through the camera (the menus' queued immediate-mode
+   quads, End -> 0x1ED0F5 from 0x121F7C) is narrowed about its own middle
+   (e1eb634; Options and Records checked in the cloud with
+   MDR_INPUT_SCRIPT, the character select to confirm). HUD Edges moves the
    top-left group only, in races (progress line, a 512 x 8 texture).
-   Water and shadow volumes are rebuilt each frame: not blended.
+   Water and shadow volumes (rebuilt each frame) blend by constants: the
+   pre-pass runs them twice (vout_alt). Scissors: the NV2A window clip.
 5. Boot further (the cloud has a front-end subset of `media/`, uploaded by
    the owner; music `.str` files are not on the owner's listing), keep
    collecting `[ICALL] Failed`
