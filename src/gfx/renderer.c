@@ -188,6 +188,10 @@ typedef struct command {
     uint32_t vbase;
     int32_t prev_vbase;
     bool unpaired;
+    /* A vertex-program draw left unpaired whose constants are blended with
+     * a draw of its program in the frame before (pair_constants): its own
+     * vertices, through the blended camera. */
+    bool consts_only;
     /* Fixed-function: how its matrices (wvp, then world) moved since its
      * partner in the frame before (has_mvel), to guess where it is next
      * (draw_distance). */
@@ -4366,8 +4370,9 @@ static void replay(SDL_GPUCommandBuffer *cmd)
             gpu = 1;
         else if (c->fvf >= 0 && !(cpu_vsh && c->has_cpu) && fvf_vs && F->gblob)
             gpu = 2;
-        if (gpu == 1 && c->vout_base >= 0 && F->gvout)
-            gpu = 3;                /* its vertices from the vertex pre-pass */
+        if (gpu == 1 && c->vout_base >= 0 && F->gvout && !(P && c->consts_only))
+            gpu = 3;                /* its vertices from the vertex pre-pass (not one blended by its
+                                     * constants alone: the pre-pass blends outputs vertex by vertex) */
         if ((c->vsh || c->fvf >= 0) && !gpu && !c->has_cpu)
             continue;           /* no vertices to draw it with */
         if (prof_frame) {
@@ -5911,6 +5916,84 @@ static bool reads_target(const frame_data *f, const command *c)
 static Uint64 mf_ns[6];
 #define MF_MARK(i) do { Uint64 _t = SDL_GetTicksNS(); mf_ns[i] = _t - mf_t0; mf_t0 = _t; } while (0)
 
+/* 3D vertex-program draws left unpaired, rebuilt every frame (Mad Dash's
+ * stencil shadow volumes, made anew from each character's outline): their
+ * vertices match nothing in the frame before, so they showed as the game
+ * drew them, the newest camera included, while everything else blended --
+ * the shadows of running characters jumped a frame ahead of their bodies
+ * at the game's rate. Each is given the constants of a draw of its program
+ * in the frame before whose registers it reads are all within a tenth of
+ * its own (the same camera, moved a little; another object's transform is
+ * further off): its own vertices through the blended constants. */
+static void pair_constants(const frame_data *prev, frame_data *cur)
+{
+    uint32_t n = 0;
+
+    for (uint32_t k = 0; k < cur->ncmds; k++) {
+        command *c = &cur->cmds[k];
+        int32_t best = -1;
+        float best_d = 3.4e38f;
+        const float *cb;
+
+        if (c->kind != CMD_DRAW || !c->vsh || !c->unpaired || c->vu.info[0] < 0 || c->vu.info[2] < 0 ||
+            (uint32_t)c->vu.info[2] + 192 > cur->nvconsts || c->vu.blend_t[1] != 0.0f || !is_3d(cur, c))
+            continue;
+        cb = cur->vconsts[c->vu.info[2]];
+        for (uint32_t m = 0; m < prev->ncmds; m++) {
+            const command *pc = &prev->cmds[m];
+            const float *ca;
+            float d = 0.0f;
+            bool close = true;
+            if (pc->kind != CMD_DRAW || !pc->vsh || pc->vu.info[0] != c->vu.info[0] || pc->vu.info[2] < 0 ||
+                (uint32_t)pc->vu.info[2] + 192 > prev->nvconsts)
+                continue;
+            ca = prev->vconsts[pc->vu.info[2]];
+            for (int q = 0; q < 192 && close; q++) {
+                float dq = 0.0f, mq = 0.0f;
+                if (!(c->consts_read[q >> 3] >> (q & 7) & 1))
+                    continue;
+                for (int e = 0; e < 4; e++) {
+                    float x = ca[4 * q + e], y = cb[4 * q + e];
+                    if (!(SDL_fabsf(x) < 1e6f && SDL_fabsf(y) < 1e6f)) {
+                        close = false;
+                        break;
+                    }
+                    dq += SDL_fabsf(x - y);
+                    mq += SDL_fabsf(x) + SDL_fabsf(y);
+                }
+                close = close && dq <= 0.1f * mq + 1e-3f;
+                d += dq;
+            }
+            if (close && d < best_d) {
+                best_d = d;
+                best = (int32_t)m;
+            }
+        }
+        if (best < 0)
+            continue;
+        {
+            const command *pc = &prev->cmds[best];
+            c->vu.interp[0] = pc->vu.info[2];
+            c->vu.interp[1] = 0;        /* its own streams alone */
+            memcpy(c->vu.prev_scale, pc->vu.scale, sizeof c->vu.prev_scale);
+            memcpy(c->vu.prev_offset, pc->vu.offset, sizeof c->vu.prev_offset);
+            c->consts_only = true;
+            n++;
+        }
+    }
+    {
+        static uint64_t win;
+        static uint32_t logs;
+        if (cur->frame >= win + 600) {
+            win = cur->frame;
+            logs = 0;
+        }
+        if (n && logs++ < 1)
+            SDL_Log("interp: frame %llu: %u unpaired program draws blended by their constants alone",
+                    (unsigned long long)cur->frame, n);
+    }
+}
+
 static void match_frames(frame_data *prev, frame_data *cur)
 {
     Uint64 mf_t0 = SDL_GetTicksNS();
@@ -5942,6 +6025,7 @@ static void match_frames(frame_data *prev, frame_data *cur)
         c->has_mvel = false;
         c->strayed = false;
         c->no_partner = false;
+        c->consts_only = false;
         if (c->vsh) {
             c->vu.interp[0] = -1;
             c->vu.interp[1] = 0;
@@ -6836,6 +6920,7 @@ static void match_frames(frame_data *prev, frame_data *cur)
                     (unsigned long long)cur->frame, n_progswitch, n_outblend, n_screen, n3, txt);
         }
     }
+    pair_constants(prev, cur);
     MF_MARK(4);
     /* A camera cut: most things jumped. Show the new frame as it is. */
     {   /* A camera cut: over half of those on screen jumped. */
