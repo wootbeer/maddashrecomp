@@ -81,10 +81,14 @@ window (`relaunch.c`, `mdr_guest_reboot`, patch 0047). Facts about the game and 
    constants alone flickered on AMD (left the vertex pre-pass, reverted):
    if wanted, run the pre-pass twice for them (both cameras), stencil-only
    draws only.
-   Widescreen: wide cameras only while a race is on screen (its progress
-   line, a 512 x 8 texture); menus at 4:3 with bars (some menu text is
-   placed through the camera and was squeezed twice). HUD Edges moves the
-   top-left group only.
+   Widescreen: cameras widened at construction, 2D squeezed back
+   (menus wide, as the owner prefers; 4:3 menus were tried, a904f4a).
+   Open: the character select places its text through the camera's view
+   width (its name and description sit where squeezing twice puts them,
+   against xemu); the layout code is not found yet (0x1E7800 prints at
+   normalised coordinates, 0x1E67B0 sets up sub-views). HUD Edges moves the
+   top-left group only, in races (progress line, a 512 x 8 texture).
+   Water and shadow volumes are rebuilt each frame: not blended.
 5. Boot further (the cloud has a front-end subset of `media/`, uploaded by
    the owner; music `.str` files are not on the owner's listing), keep
    collecting `[ICALL] Failed`
