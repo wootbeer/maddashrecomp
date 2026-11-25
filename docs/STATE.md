@@ -71,12 +71,20 @@ window (`relaunch.c`, `mdr_guest_reboot`, patch 0047). Facts about the game and 
    via 0x000AD2EB), so the request's completion was never seen. Not seen
    in 8 cloud boots. Suspect: RECOMP_ASYNC_IO's STATUS_PENDING against
    XAPI's OVERLAPPED handling. Instrument if it repeats.
-4. Frame gen. ghosting: fixed in the cloud, to confirm on Windows. Two
-   causes: with `fs_wait` (on from the start on AMD's driver) a draw whose
-   bone registers jumped was left unblended (running characters, every
-   frame); and a frame never shown on its own was blended from without
-   its upload or vertex pre-pass. Check: `--interp=1 MDR_CAPTURE=2600
-   MDR_CAPTURE_INTERP=1` without `MDR_NO_DRAW`, `_t000` against `_prev`.
+4. Frame interpolation: characters blend (fs_wait no longer leaves
+   jumped bone registers unblended; a frame never shown alone is uploaded
+   and pre-passed before blending from). Pacing runs behind the frames'
+   readiness (show_delay, held_q; MDR_PACE=0 for the stamps alone): in
+   the owner's logs motion error 7 -> 2.3 ms a picture. The running
+   stutter that remains is the game's own (the same in xemu). Shadow
+   volumes are rebuilt each frame and drawn unblended; blending them by
+   constants alone flickered on AMD (left the vertex pre-pass, reverted):
+   if wanted, run the pre-pass twice for them (both cameras), stencil-only
+   draws only.
+   Widescreen: wide cameras only while a race is on screen (its progress
+   line, a 512 x 8 texture); menus at 4:3 with bars (some menu text is
+   placed through the camera and was squeezed twice). HUD Edges moves the
+   top-left group only.
 5. Boot further (the cloud has a front-end subset of `media/`, uploaded by
    the owner; music `.str` files are not on the owner's listing), keep
    collecting `[ICALL] Failed`

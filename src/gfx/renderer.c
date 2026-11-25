@@ -7008,8 +7008,8 @@ static bool shot_frame(const frame_data *f)
  * frame between prev and f at t (0 prev, 1 f). Captures and screenshots
  * are of frames as they are. */
 static double frame_interval = 1e9 / 59.94;    /* between game frames, smoothed */
-/* MDR_PACE=1 (trial): the blend runs show_delay behind the game frames'
- * vblank stamps. A frame is stamped with the vblank its Swap saw, and when
+/* Interpolating (MDR_PACE=0 to go back to the stamps alone): the blend
+ * runs show_delay behind the game frames' vblank stamps. A frame is stamped with the vblank its Swap saw, and when
  * the game finished after that vblank it is ready (handed over and paired)
  * up to a refresh and more later: on the stamps alone the blend toward the
  * frame before had already ended, the picture stood still, and the new
@@ -7029,9 +7029,9 @@ static bool pace_on(void)
     static int on = -1;
     if (on < 0) {
         const char *e = SDL_getenv("MDR_PACE");
-        on = e && *e == '1';
-        if (on)
-            SDL_Log("interp: paced behind frames' readiness (MDR_PACE=1)");
+        on = !(e && *e == '0');
+        if (!on)
+            SDL_Log("interp: paced on the frames' stamps alone (MDR_PACE=0)");
     }
     return on;
 }
