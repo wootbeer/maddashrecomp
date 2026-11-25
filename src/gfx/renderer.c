@@ -276,6 +276,7 @@ typedef struct frame_data {
     SDL_GPUBuffer *gvout;       /* the vertex pre-pass's outputs (vout_prepass) */
     Uint32 gvout_size;
     bool vout_done;             /* the pre-pass ran for it (once, however often it is shown) */
+    float shape;                /* the shape it was drawn for (4/3, or wider in a race; widescreen.c) */
     bool on_gpu;
 } frame_data;
 
@@ -5166,7 +5167,7 @@ static void present_to_window(SDL_GPUCommandBuffer *cmd)
          * all of it, bars elsewhere -- also where the overlay goes, so it is
          * whole in every mode; zoomed to fill, the overflow cut off;
          * stretched to the window. */
-        float aw = mdr_widescreen_active() ? frame_h * mdr_widescreen_ratio() : (float)frame_w;
+        float aw = F && F->shape > 1.34f ? frame_h * F->shape : (float)frame_w;
         float kf = SDL_min((float)sw / aw, (float)sh / frame_h);
         float kz = SDL_max((float)sw / aw, (float)sh / frame_h);
         /* Zoom is for Orta, whose widescreen modes fill most of a wide
@@ -6886,6 +6887,7 @@ static void hand_over(void)
     frame_data *next = NULL;
 
     F->frame = frames;
+    F->shape = mdr_widescreen_frame_ratio();
     /* On the vblank grid: stamped when recording ended, frames wobbled by
      * however long the game took, and blending with them did too. */
     F->stamp = frame_time_ns ? frame_time_ns : tex_t0;
