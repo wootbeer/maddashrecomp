@@ -7162,7 +7162,8 @@ static void draw_frame_main(frame_data *f, frame_data *prev, float t)
 #endif
     if (shot)
         save_screenshot(&cmd, shot_dir, "frame");
-    else if (!prev && f->frame == capture_frame) {
+    else if (!prev && f->frame >= capture_frame && f->frame < capture_frame + capture_seq) {
+        /* MDR_CAPTURE_SEQ=n: the n frames from it, each as it is */
         save_screenshot(&cmd, ".", "capture");
         SDL_Log("capture: saved capture_%05llu.bmp", (unsigned long long)f->frame);
     }
@@ -7613,7 +7614,8 @@ void mdr_gfx_main_loop(void)
             if (prev && f->frame >= capture_frame && f->frame < capture_frame + capture_seq)
                 capture_interp(prev, cur);
             /* Captures and screenshots are of the frame as it is. */
-            if (!interp || !prev || shot_frame(f) || f->frame == capture_frame) {
+            if (!interp || !prev || shot_frame(f) ||
+                (f->frame >= capture_frame && f->frame < capture_frame + capture_seq)) {
                 draw_frame(f, NULL, 1.0f);
                 win_shown++;
                 SDL_LockMutex(q_lock);
