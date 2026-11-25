@@ -6295,6 +6295,22 @@ static void match_frames(frame_data *prev, frame_data *cur)
                     c->pair_prev = pk[i + order[k]].cmd;
                 } else if (c->vsh && pc->vsh) {
                     bool same_in = true, regs_jumped = false;
+                    if (SDL_fabsf(c->anchor[3] - 1.0f) < 1e-4f && SDL_fabsf(c->anchor[7] - 1.0f) < 1e-4f &&
+                        SDL_fabsf(pc->anchor[3] - 1.0f) < 1e-4f && SDL_fabsf(pc->anchor[7] - 1.0f) < 1e-4f) {
+                        /* A screen-space piece that jumped: not blended, as
+                         * the sprites below. Switching Mad Dash's menus,
+                         * text paired with text of the menu before in
+                         * another place, and slid across the screen for an
+                         * in-between frame. A quarter of the screen, or over
+                         * half its own size (first to last vertex). */
+                        float vw = c->draw.viewport[2] > 0.0f ? c->draw.viewport[2] : 640.0f;
+                        float vh = c->draw.viewport[3] > 0.0f ? c->draw.viewport[3] : 480.0f;
+                        float dx = SDL_fabsf(c->anchor[0] - pc->anchor[0]), dy = SDL_fabsf(c->anchor[1] - pc->anchor[1]);
+                        float size = SDL_max(SDL_fabsf(c->anchor[4] - c->anchor[0]), SDL_fabsf(c->anchor[5] - c->anchor[1]));
+                        float moved = SDL_max(dx, dy);
+                        if (dx > vw * 0.25f || dy > vh * 0.25f || (moved > 2.0f && moved > size * 0.5f))
+                            continue;
+                    }
                     {   /* Rebuilt in another order: as below, on every input of
                          * floats of a vertex program (JSRF's
                          * lightning keeps its positions and makes each zigzag
