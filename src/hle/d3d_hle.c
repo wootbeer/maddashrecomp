@@ -568,6 +568,12 @@ static void nv_cull(uint32_t m, uint32_t v)
  * likewise for program memory. Constants go to the library's copy that the
  * draws read (VSH_SHADOW), programs to prog_mem. */
 static uint32_t nv_const_slot, nv_const_word, nv_prog_slot, nv_prog_word;
+/* The window clip (what SetScissors writes, and any display list): its type
+ * (SET_WINDOW_CLIP_TYPE 0x2B4: 0 draws inside, 1 outside) and the first
+ * window (SET_WINDOW_CLIP_HORIZONTAL 0x2C0, VERTICAL 0x2E0: the first and
+ * last pixel, low and high 12 bits). Applied as the draw's scissor
+ * (fill_draw_state); the game sets the whole screen most of the time. */
+static uint32_t nv_clip_type, nv_clip_h = 0x027F0000u, nv_clip_v = 0x01DF0000u;
 static void nv_constant_word(uint32_t v);
 static void nv_program_word(uint32_t v);
 
@@ -585,6 +591,12 @@ static void nv_method(uint32_t m, uint32_t v)
         nv_program_word(v);
     } else if (m == 0x308 || m == 0x39C || m == 0x3A0)
         nv_cull(m, v);
+    else if (m == 0x2B4)
+        nv_clip_type = v;
+    else if (m == 0x2C0)
+        nv_clip_h = v;
+    else if (m == 0x2E0)
+        nv_clip_v = v;
     else if (m >= 0x0300 && m < 0x0A00)
         nv_render_state(m, v);
     else if (m >= 0x1720 && m < 0x1760)
@@ -1332,6 +1344,22 @@ static void fill_draw_state(mdr_draw *d, bool pretransformed)
     d->ff.alpha_test[2] = (int32_t)(RS(RS_ALPHAREF) & 0xFF);
     d->ff.alpha_test[3] = RS(RS_SPECULARENABLE) != 0;
 
+    {   /* The window clip: none when it takes in the whole target, or
+         * draws outside the window (no game seen doing that). */
+        int x0 = (int)(nv_clip_h & 0xFFF), x1 = (int)((nv_clip_h >> 16) & 0xFFF) + 1;
+        int y0 = (int)(nv_clip_v & 0xFFF), y1 = (int)((nv_clip_v >> 16) & 0xFFF) + 1;
+        d->scissor[0] = d->scissor[1] = d->scissor[2] = d->scissor[3] = 0;
+        if (!nv_clip_type && x1 > x0 && y1 > y0 && (x0 > 0 || y0 > 0 || x1 < rtw || y1 < rth)) {
+            static int said;
+            d->scissor[0] = (int16_t)x0;
+            d->scissor[1] = (int16_t)y0;
+            d->scissor[2] = (int16_t)x1;
+            d->scissor[3] = (int16_t)y1;
+            if (said < 3 && ++said)
+                SDL_Log("d3d: a scissor at %d,%d-%d,%d (frame %llu)", x0, y0, x1, y1,
+                        (unsigned long long)mdr_gfx_frame_count());
+        }
+    }
     if (pretransformed || !st.have_viewport) {
         d->viewport[2] = (float)rtw;
         d->viewport[3] = (float)rth;
@@ -2294,6 +2322,22 @@ static squeeze_t hud_squeeze_of(float x0, float x1, float y0, float y1)
     return q;
 }
 
+/* A squeezed draw's scissor, squeezed with it (about the same point, in
+ * the target's pixels): a window around a piece of HUD or menu stays
+ * around it. */
+static void squeeze_scissor(mdr_draw *d, squeeze_t q)
+{
+    int rtw, rth;
+    float a;
+
+    if (q.k == 1.0f || d->scissor[2] <= d->scissor[0])
+        return;
+    target_size(&rtw, &rth);
+    a = (q.at + 1.0f) * 0.5f * (float)rtw;
+    d->scissor[0] = (int16_t)SDL_floorf(a + ((float)d->scissor[0] - a) * q.k);
+    d->scissor[2] = (int16_t)SDL_ceilf(a + ((float)d->scissor[2] - a) * q.k);
+}
+
 /* A clip-space vertex squeezed: x about at * w. */
 static void squeeze_vertex(mdr_vertex *v, squeeze_t q)
 {
@@ -2520,8 +2564,10 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
                 for (uint32_t i = 0; i < count; i++)
                     squeeze_vertex(&vbuf[i], squeeze);
         }
+        squeeze_scissor(&d, squeeze);
         mdr_gfx_draw_vsh(&d, &g, count, ibuf, ni, cpu_too ? vbuf : NULL);
     } else if (fvf_on_gpu) {
+        squeeze_scissor(&d, squeeze);
         if (!mdr_gfx_draw_fvf(&d, &gpu_f, count, ibuf, ni, cpu_too ? vbuf : NULL)) {
             if (!cpu_too)
                 timed_fvf(st.vshader, base, stride, first, count, vbuf, &pre);
@@ -2548,6 +2594,7 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
                 for (uint32_t i = 0; i < count; i++)
                     squeeze_vertex(&vbuf[i], squeeze);
         }
+        squeeze_scissor(&d, squeeze);
         /* The game's vertex data, so interpolation can find this draw in
          * the next frame. */
         mdr_gfx_set_draw_source((const void *)XBOX_PTR(base + first * stride));

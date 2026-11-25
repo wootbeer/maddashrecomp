@@ -3153,8 +3153,9 @@ static bool consts_pushed;      /* push_consts: what it pushed last is bound sti
 static struct {
     SDL_GPUGraphicsPipeline *p;
     int gpu;                    /* the geometry bound (bind_geometry), -1 none */
-    bool vp_set, tsb_set, ff_set;
+    bool vp_set, tsb_set, ff_set, sc_set;
     SDL_GPUViewport vp;
+    SDL_Rect sc;
     SDL_GPUTextureSamplerBinding tsb[4];
     mdr_ff_uniforms ff;
 } rec;
@@ -3230,7 +3231,7 @@ static SDL_GPURenderPass *begin_pass(SDL_GPUCommandBuffer *cmd, const command *c
     consts_pushed = false;
     rec.p = NULL;
     rec.gpu = -1;
-    rec.vp_set = rec.tsb_set = rec.ff_set = false;
+    rec.vp_set = rec.tsb_set = rec.ff_set = rec.sc_set = false;
 
     /* The resolved texture holds what the multisampled buffer does not:
      * draw it in first, unless this pass clears the color anyway. */
@@ -4585,6 +4586,26 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                 rec.gpu = gpu;
             }
         }
+        {   /* The game's scissor (the window clip), scaled as the viewport;
+             * the whole target without one. */
+            SDL_Rect sc;
+            const int16_t *s = c->draw.scissor;
+            if (s[2] > s[0] && s[3] > s[1]) {
+                sc.x = (int)SDL_floorf(s[0] * vsx);
+                sc.y = (int)SDL_floorf(s[1] * vsy);
+                sc.w = (int)SDL_ceilf(s[2] * vsx) - sc.x;
+                sc.h = (int)SDL_ceilf(s[3] * vsy) - sc.y;
+            } else {
+                sc.x = sc.y = 0;
+                sc.w = cur_target ? (int)cur_target->pw : (int)SDL_ceilf(frame_w * rscale);
+                sc.h = cur_target ? (int)cur_target->ph : (int)SDL_ceilf(frame_h * rscale);
+            }
+            if (!rec.sc_set || memcmp(&rec.sc, &sc, sizeof sc)) {
+                SDL_SetGPUScissor(pass, &sc);
+                rec.sc = sc;
+                rec.sc_set = true;
+            }
+        }
         if (!rec.tsb_set || memcmp(rec.tsb, tsb, sizeof rec.tsb)) {
             SDL_BindGPUFragmentSamplers(pass, 0, tsb, 4);
             memcpy(rec.tsb, tsb, sizeof rec.tsb);
@@ -4598,6 +4619,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
         if (prof_frame && prof_skip == 3) {
             SDL_Rect one = { 0, 0, 1, 1 };
             SDL_SetGPUScissor(pass, &one);
+            rec.sc_set = false;
         }
         if (c->draw.ps.stencil_enable)
             SDL_SetGPUStencilReference(pass, c->draw.stencil_ref);

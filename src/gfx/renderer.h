@@ -134,6 +134,10 @@ typedef struct mdr_draw {
     mdr_tex_ref        tex[4];
     mdr_ff_uniforms    ff;
     float              viewport[6];  /* x, y, w, h, min z, max z */
+    /* The scissor (the NV2A's window clip, SetScissors): x0, y0, x1, y1 in
+     * the target's pixels at the game's size, x1 past the last column;
+     * x1 <= x0 for none. */
+    int16_t            scissor[4];
     uint8_t            stencil_ref;
     /* For captures only: the vertex shader (FVF or program handle),
      * lighting enable, COLORVERTEX with the number of lights switched on in
