@@ -56,7 +56,6 @@ static SDL_AtomicInt last_called;  /* last vblank whose callback has run */
 static uint32_t vblank_data;       /* guest D3DVBLANKDATA */
 static int swap_interval = 1;      /* vblanks per Present; 0 = immediate */
 static void wide_frame(void);        /* HUD Edges: the frame's long pieces start over (hud_squeeze_of) */
-static bool race_now, race_last;     /* the race's progress line drawn this frame, the last (submit_draw) */
 static bool backdrop_frame;        /* widescreen: a full-screen 2D backdrop this frame (hud_squeeze_of) */
 
 
@@ -356,9 +355,7 @@ void sub_002473A0(void)
     static Uint64 last_vblank;
     uint64_t n;
 
-    /* Wide cameras in a race (src/guest/widescreen.c): its progress line
-     * drawn this frame or the last. */
-    mdr_widescreen_race(race_now || race_last);
+    mdr_widescreen_frame();
     backdrop_frame = false;
     wide_frame();
     if (swap_interval > 0) {
@@ -2240,6 +2237,7 @@ typedef struct squeeze_t { float k, at; } squeeze_t;    /* factor (1: none); anc
 #define WIDE_MAX 32
 typedef struct wide_set { float r[WIDE_MAX][4]; int n; } wide_set;  /* lo, hi, top, bot */
 static wide_set wide_now, wide_last;
+static bool race_now, race_last;     /* the race's progress line drawn (submit_draw) */
 
 static void wide_frame(void)
 {
@@ -2417,7 +2415,7 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
             squeeze_vertex(&vbuf[i], squeeze);
     }
     fill_draw_state(&d, pre);
-    if (d.tex[0].data && mdr_settings_get()->aspect != MDR_ASPECT_4_3) {
+    if (d.tex[0].data && mdr_widescreen_active()) {
         /* The race's progress line, its texture 512 x 8: a race on screen
          * (HUD Edges, hud_squeeze_of). */
         mdr_xtex_info ti;

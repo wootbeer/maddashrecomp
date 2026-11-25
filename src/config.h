@@ -79,18 +79,17 @@ enum { MDR_FIT_BARS, MDR_FIT_STRETCH, MDR_FIT_ZOOM, MDR_FIT_COUNT };
  * or zoomed. */
 enum { MDR_MOVIE_ORIGINAL, MDR_MOVIE_BARS, MDR_MOVIE_STRETCH, MDR_MOVIE_ZOOM, MDR_MOVIE_COUNT };
 
-/* Widescreen (src/guest/widescreen.c): whether the game's cameras are wide
- * now (a race on screen, the Aspect setting wider than 4:3), and the shape
- * the picture is meant to be shown at (4/3 when not); frame_ratio: the shape
- * of the frame just finished (renderer.c, hand_over). */
+/* Whether the game set itself up in its widescreen mode (anamorphic 16:9,
+ * or wider: a wider view squeezed into 640x480), which it reads once at
+ * start, and the shape its picture is meant to be shown at (4/3 when not
+ * widescreen): src/guest/widescreen.c. */
 bool mdr_widescreen_active(void);
 float mdr_widescreen_ratio(void);
-float mdr_widescreen_frame_ratio(void);
-/* Always false now: the Aspect setting takes effect at once (kept for the
- * menu's help text). */
+/* The aspect setting asks for 4:3 in a widescreen game or the other way:
+ * that takes a restart (16:9 and 21:9 switch at the next frame). */
 bool mdr_widescreen_needs_restart(void);
-/* Game thread, at Present: whether a race is on screen (d3d_hle.c). */
-void mdr_widescreen_race(bool race);
+/* Game thread, once a frame: applies a change between 16:9 and 21:9. */
+void mdr_widescreen_frame(void);
 
 /* The current settings: defaults until mdr_config_load reads the file. */
 mdr_settings *mdr_settings_get(void);
