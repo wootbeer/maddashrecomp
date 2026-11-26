@@ -6297,24 +6297,15 @@ static void match_frames(frame_data *prev, frame_data *cur)
                     bool same_in = true, regs_jumped = false;
                     if (SDL_fabsf(c->anchor[3] - 1.0f) < 1e-4f && SDL_fabsf(c->anchor[7] - 1.0f) < 1e-4f &&
                         SDL_fabsf(pc->anchor[3] - 1.0f) < 1e-4f && SDL_fabsf(pc->anchor[7] - 1.0f) < 1e-4f) {
-                        /* A screen-space piece that jumped: not blended, as
-                         * the sprites below. Switching Mad Dash's menus,
-                         * text paired with text of the menu before in
-                         * another place, and slid across the screen for an
-                         * in-between frame. A quarter of the screen, or over
-                         * half its own size (first to last vertex), or
-                         * another number of vertices. */
-                        float vw = c->draw.viewport[2] > 0.0f ? c->draw.viewport[2] : 640.0f;
-                        float vh = c->draw.viewport[3] > 0.0f ? c->draw.viewport[3] : 480.0f;
-                        float dx = SDL_fabsf(c->anchor[0] - pc->anchor[0]), dy = SDL_fabsf(c->anchor[1] - pc->anchor[1]);
-                        float size = SDL_max(SDL_fabsf(c->anchor[4] - c->anchor[0]), SDL_fabsf(c->anchor[5] - c->anchor[1]));
-                        float moved = SDL_max(dx, dy);
-                        if (dx > vw * 0.25f || dy > vh * 0.25f || (moved > 2.0f && moved > size * 0.5f))
-                            continue;
-                        /* Another number of vertices: other text (another
-                         * string, as a menu changes), not the same one moved. */
-                        if (c->id_nv != pc->id_nv)
-                            continue;
+                        /* Screen space (2D: menus, their text, the HUD):
+                         * not blended at all, shown at the game's rate.
+                         * Switching Mad Dash's menus, text paired with text
+                         * of the screen before, elsewhere, and slid across
+                         * for an in-between frame; ruling out jumps, other
+                         * vertex counts and the menus' queued quads still
+                         * left some moving on every menu. Still or nearly,
+                         * 2D needs no in-between frames. */
+                        continue;
                     }
                     {   /* Rebuilt in another order: as below, on every input of
                          * floats of a vertex program (JSRF's
