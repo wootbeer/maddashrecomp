@@ -6298,14 +6298,24 @@ static void match_frames(frame_data *prev, frame_data *cur)
                     if (SDL_fabsf(c->anchor[3] - 1.0f) < 1e-4f && SDL_fabsf(c->anchor[7] - 1.0f) < 1e-4f &&
                         SDL_fabsf(pc->anchor[3] - 1.0f) < 1e-4f && SDL_fabsf(pc->anchor[7] - 1.0f) < 1e-4f) {
                         /* Screen space (2D: menus, their text, the HUD):
-                         * not blended at all, shown at the game's rate.
+                         * blended only with what is surely the same piece.
                          * Switching Mad Dash's menus, text paired with text
                          * of the screen before, elsewhere, and slid across
-                         * for an in-between frame; ruling out jumps, other
-                         * vertex counts and the menus' queued quads still
-                         * left some moving on every menu. Still or nearly,
-                         * 2D needs no in-between frames. */
-                        continue;
+                         * for an in-between frame. Not blended: a jump over
+                         * a quarter of the screen, or over two pixels and
+                         * half its own size (first to last vertex), or over
+                         * 12 pixels at all, or another number of vertices
+                         * (another string). Not blending 2D at all (aa255e6)
+                         * left text placed by the swaying menu camera
+                         * shaking against the blended 3D behind it. */
+                        float vw = c->draw.viewport[2] > 0.0f ? c->draw.viewport[2] : 640.0f;
+                        float vh = c->draw.viewport[3] > 0.0f ? c->draw.viewport[3] : 480.0f;
+                        float dx = SDL_fabsf(c->anchor[0] - pc->anchor[0]), dy = SDL_fabsf(c->anchor[1] - pc->anchor[1]);
+                        float size = SDL_max(SDL_fabsf(c->anchor[4] - c->anchor[0]), SDL_fabsf(c->anchor[5] - c->anchor[1]));
+                        float moved = SDL_max(dx, dy);
+                        if (dx > vw * 0.25f || dy > vh * 0.25f || (moved > 2.0f && moved > size * 0.5f) ||
+                            moved > 12.0f || c->id_nv != pc->id_nv)
+                            continue;
                     }
                     {   /* Rebuilt in another order: as below, on every input of
                          * floats of a vertex program (JSRF's
