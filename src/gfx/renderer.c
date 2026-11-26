@@ -6316,6 +6316,15 @@ static void match_frames(frame_data *prev, frame_data *cur)
                         if (dx > vw * 0.25f || dy > vh * 0.25f || (moved > 2.0f && moved > size * 0.5f) ||
                             moved > 12.0f || c->id_nv != pc->id_nv)
                             continue;
+                        /* The menus' queued text (drawn at the frame's end
+                         * through the display list's immediate mode: End
+                         * returning to 0x001ED0F5 from 0x00121F7C), placed
+                         * by the menu camera: over three pixels a game frame
+                         * is not the camera's sway (a pixel or two) but text
+                         * settling as a screen opens, shown as the game
+                         * draws it, not slid there. */
+                        if (moved > 3.0f && c->draw.caller[0] == 0x001ED0F5u && c->draw.caller[1] == 0x00121F7Cu)
+                            continue;
                         {   /* Its shape (first to last vertex) changed by over
                              * a quarter: another layout (the adventure menu's
                              * button labels roll through two rows; blended
