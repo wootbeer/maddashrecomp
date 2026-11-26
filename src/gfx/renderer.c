@@ -6316,6 +6316,17 @@ static void match_frames(frame_data *prev, frame_data *cur)
                         if (dx > vw * 0.25f || dy > vh * 0.25f || (moved > 2.0f && moved > size * 0.5f) ||
                             moved > 12.0f || c->id_nv != pc->id_nv)
                             continue;
+                        {   /* Its shape (first to last vertex) changed by over
+                             * a quarter: another layout (the adventure menu's
+                             * button labels roll through two rows; blended
+                             * point by point, the text squashed flat). */
+                            float wc = c->anchor[4] - c->anchor[0], hc = c->anchor[5] - c->anchor[1];
+                            float wp = pc->anchor[4] - pc->anchor[0], hp = pc->anchor[5] - pc->anchor[1];
+                            float ddw = SDL_fabsf(wc - wp), ddh = SDL_fabsf(hc - hp);
+                            if ((ddw > 2.0f && ddw > 0.25f * SDL_max(SDL_fabsf(wc), SDL_fabsf(wp))) ||
+                                (ddh > 2.0f && ddh > 0.25f * SDL_max(SDL_fabsf(hc), SDL_fabsf(hp))))
+                                continue;
+                        }
                     }
                     {   /* Rebuilt in another order: as below, on every input of
                          * floats of a vertex program (JSRF's
