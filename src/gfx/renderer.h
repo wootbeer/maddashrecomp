@@ -310,6 +310,9 @@ bool mdr_gfx_present(void);
 /* When the frame about to be presented shows (SDL ticks, ns): the vblank
  * its Swap waited for, so frames sit on an even grid for interpolation. */
 void mdr_gfx_set_frame_time(uint64_t ns);
+/* Game thread, at Swap: whether a race is on screen (d3d_hle.c, its
+ * progress line). Frame interpolation blends only in races. */
+void mdr_gfx_set_race(bool race);
 
 /* The options overlay holds the game: the vblank clock (d3d_hle.c) stops
  * with it. How long it has held the game in all (ns), and whether it does

@@ -280,6 +280,7 @@ typedef struct frame_data {
     SDL_GPUBuffer *gvout;       /* the vertex pre-pass's outputs (vout_prepass) */
     Uint32 gvout_size;
     bool vout_done;             /* the pre-pass ran for it (once, however often it is shown) */
+    bool race;                  /* a race on screen (mdr_gfx_set_race): blended only then */
     bool on_gpu;
 } frame_data;
 
@@ -6098,7 +6099,10 @@ static void match_frames(frame_data *prev, frame_data *cur)
             cur->fvf_us[c->fvf].interp2[0] = 0;
         }
     }
-    if (!prev)
+    /* Only races blend (the owner): menus are shown as the game draws them,
+     * as without interpolation. Their text slid, popped and shook between
+     * frames however the pairing was ruled, and it sits still anyway. */
+    if (!prev || !cur->race)
         return;
     taken = grow(taken, &cap_taken, prev->ncmds + 1, 1);
     grouped = grow(grouped, &cap_grouped, cur->ncmds + 1, 1);
@@ -6297,45 +6301,10 @@ static void match_frames(frame_data *prev, frame_data *cur)
                     bool same_in = true, regs_jumped = false;
                     if (SDL_fabsf(c->anchor[3] - 1.0f) < 1e-4f && SDL_fabsf(c->anchor[7] - 1.0f) < 1e-4f &&
                         SDL_fabsf(pc->anchor[3] - 1.0f) < 1e-4f && SDL_fabsf(pc->anchor[7] - 1.0f) < 1e-4f) {
-                        /* Screen space (2D: menus, their text, the HUD):
-                         * blended only with what is surely the same piece.
-                         * Switching Mad Dash's menus, text paired with text
-                         * of the screen before, elsewhere, and slid across
-                         * for an in-between frame. Not blended: a jump over
-                         * a quarter of the screen, or over two pixels and
-                         * half its own size (first to last vertex), or over
-                         * 12 pixels at all, or another number of vertices
-                         * (another string). Not blending 2D at all (aa255e6)
-                         * left text placed by the swaying menu camera
-                         * shaking against the blended 3D behind it. */
-                        float vw = c->draw.viewport[2] > 0.0f ? c->draw.viewport[2] : 640.0f;
-                        float vh = c->draw.viewport[3] > 0.0f ? c->draw.viewport[3] : 480.0f;
-                        float dx = SDL_fabsf(c->anchor[0] - pc->anchor[0]), dy = SDL_fabsf(c->anchor[1] - pc->anchor[1]);
-                        float size = SDL_max(SDL_fabsf(c->anchor[4] - c->anchor[0]), SDL_fabsf(c->anchor[5] - c->anchor[1]));
-                        float moved = SDL_max(dx, dy);
-                        if (dx > vw * 0.25f || dy > vh * 0.25f || (moved > 2.0f && moved > size * 0.5f) ||
-                            moved > 12.0f || c->id_nv != pc->id_nv)
-                            continue;
-                        /* The menus' queued text (drawn at the frame's end
-                         * through the display list's immediate mode: End
-                         * returning to 0x001ED0F5 from 0x00121F7C), placed
-                         * by the menu camera: over three pixels a game frame
-                         * is not the camera's sway (a pixel or two) but text
-                         * settling as a screen opens, shown as the game
-                         * draws it, not slid there. */
-                        if (moved > 3.0f && c->draw.caller[0] == 0x001ED0F5u && c->draw.caller[1] == 0x00121F7Cu)
-                            continue;
-                        {   /* Its shape (first to last vertex) changed by over
-                             * a quarter: another layout (the adventure menu's
-                             * button labels roll through two rows; blended
-                             * point by point, the text squashed flat). */
-                            float wc = c->anchor[4] - c->anchor[0], hc = c->anchor[5] - c->anchor[1];
-                            float wp = pc->anchor[4] - pc->anchor[0], hp = pc->anchor[5] - pc->anchor[1];
-                            float ddw = SDL_fabsf(wc - wp), ddh = SDL_fabsf(hc - hp);
-                            if ((ddw > 2.0f && ddw > 0.25f * SDL_max(SDL_fabsf(wc), SDL_fabsf(wp))) ||
-                                (ddh > 2.0f && ddh > 0.25f * SDL_max(SDL_fabsf(hc), SDL_fabsf(hp))))
-                                continue;
-                        }
+                        /* Screen space (2D: the race's HUD and text): not
+                         * blended, shown at the game's rate. It sits still;
+                         * paired with other pieces it slid and popped. */
+                        continue;
                     }
                     {   /* Rebuilt in another order: as below, on every input of
                          * floats of a vertex program (JSRF's
@@ -7066,6 +7035,7 @@ static frame_data *free_frame(void)
 /* Game thread, at Swap: resolve the frame's textures while guest memory
  * still holds them, then hand it over and go on recording into another. */
 static uint64_t frame_time_ns;     /* mdr_gfx_set_frame_time, for the next hand_over */
+static bool race_next;             /* mdr_gfx_set_race, for the next hand_over */
 
 static void hand_over(void)
 {
@@ -7073,6 +7043,7 @@ static void hand_over(void)
     frame_data *next = NULL;
 
     F->frame = frames;
+    F->race = race_next;
     /* On the vblank grid: stamped when recording ended, frames wobbled by
      * however long the game took, and blending with them did too. */
     F->stamp = frame_time_ns ? frame_time_ns : tex_t0;
@@ -7159,6 +7130,11 @@ static void hand_over(void)
 void mdr_gfx_set_frame_time(uint64_t ns)
 {
     frame_time_ns = ns;
+}
+
+void mdr_gfx_set_race(bool race)
+{
+    race_next = race;
 }
 
 bool mdr_gfx_present(void)
