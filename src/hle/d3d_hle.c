@@ -2322,8 +2322,11 @@ typedef struct wide_set { float r[WIDE_MAX][4]; int n; } wide_set;  /* lo, hi, t
 static wide_set wide_now, wide_last;
 static bool race_now, race_last;     /* the race's progress line drawn (submit_draw) */
 
+static void boxes_frame(void);
+
 static void wide_frame(void)
 {
+    boxes_frame();
     wide_last = wide_now;
     wide_now.n = 0;
     race_last = race_now;
@@ -2390,12 +2393,54 @@ static squeeze_t hud_squeeze_of(float x0, float x1, float y0, float y1)
  * where the camera put it. Fixed 2D (the race HUD, the title) comes from
  * the display list's vertex arrays, and the only such quad in a race is the
  * full-screen one that darkens the stencil shadows (left as it is). Text
- * only -- two quads or more: the same path draws the save popup's box and
- * its edge lines, laid out fixed, one quad each (the lines, left where the
- * camera would have put them, stood off the box). */
+ * only -- two quads or more, and not on a fixed panel (on_box): the same
+ * path draws the save popup's box, its edge lines and its text, all laid
+ * out fixed (left where the camera would have put them, the lines stood off
+ * the box and the text off its middle). */
+static bool queued_quads(const mdr_draw *d)
+{
+    return d->caller[0] == 0x001ED0F5u && d->caller[1] == 0x00121F7Cu;
+}
+
 static bool camera_placed(const mdr_draw *d, uint32_t count)
 {
-    return d->caller[0] == 0x001ED0F5u && d->caller[1] == 0x00121F7Cu && count >= 8;
+    return queued_quads(d) && count >= 8;
+}
+
+/* Panels laid out fixed on the same path: one quad, at least 64 x 16
+ * pixels (the save popup's box), this frame's and the last's. What lies on
+ * one (its text, its edge lines) is fixed 2D as well, squeezed as any: the
+ * menus' camera-placed text sits on 3D frames, not on such a box. */
+#define BOX_MAX 8
+static struct { float r[BOX_MAX][4]; int n; } boxes_now, boxes_last;
+
+static void boxes_frame(void)
+{
+    boxes_last = boxes_now;
+    boxes_now.n = 0;
+}
+
+static void box_note(const mdr_draw *d, uint32_t count, float lo, float hi, float top, float bot)
+{
+    if (!queued_quads(d) || count >= 8 || hi - lo < 64.0f || bot - top < 16.0f || boxes_now.n == BOX_MAX)
+        return;
+    boxes_now.r[boxes_now.n][0] = lo;
+    boxes_now.r[boxes_now.n][1] = hi;
+    boxes_now.r[boxes_now.n][2] = top;
+    boxes_now.r[boxes_now.n][3] = bot;
+    boxes_now.n++;
+}
+
+static bool on_box(float lo, float hi, float top, float bot)
+{
+    for (int k = 0; k < 2; k++) {
+        const float (*r)[4] = k ? boxes_last.r : boxes_now.r;
+        int n = k ? boxes_last.n : boxes_now.n;
+        for (int i = 0; i < n; i++)
+            if (lo < r[i][1] && hi > r[i][0] && top < r[i][3] && bot > r[i][2])
+                return true;
+    }
+    return false;
 }
 
 /* A squeezed draw's scissor, squeezed with it (about the same point, in
@@ -2627,8 +2672,12 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
         mdr_gpu_vsh g;
         want_text_anchor = mdr_widescreen_active() && camera_placed(&d, count);
         vsh_gpu_job(gpu_p, base, stride, first, count, &g);
-        if (g.spanned)
+        if (g.spanned) {
             squeeze = hud_squeeze_of(g.span[0], g.span[1], g.span[2], g.span[3]);
+            box_note(&d, count, g.span[0], g.span[1], g.span[2], g.span[3]);
+            if (want_text_anchor && on_box(g.span[0], g.span[1], g.span[2], g.span[3]))
+                want_text_anchor = false;   /* text on a fixed panel */
+        }
         if (g.spanned && squeeze.k != 1.0f && want_text_anchor) {
             int rtw, rth;
             target_size(&rtw, &rth);
@@ -2663,6 +2712,7 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
             /* A program run on the CPU: screen space as on the GPU path,
              * by the extent of all its vertices. */
             int rtw, rth;
+            bool camera;
             float lx = 1e9f, hx = -1e9f, ly = 1e9f, hy = -1e9f;
             target_size(&rtw, &rth);
             for (uint32_t i = 0; i < count; i++) {
@@ -2673,7 +2723,13 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
             }
             squeeze = hud_squeeze_of((lx + 1.0f) * 0.5f * (float)rtw, (hx + 1.0f) * 0.5f * (float)rtw,
                                      (1.0f - hy) * 0.5f * (float)rth, (1.0f - ly) * 0.5f * (float)rth);
-            if (squeeze.k != 1.0f && camera_placed(&d, count)) {   /* about the point it was placed by (clip x) */
+            {
+                float plo = (lx + 1.0f) * 0.5f * (float)rtw, phi = (hx + 1.0f) * 0.5f * (float)rtw;
+                float ptop = (1.0f - hy) * 0.5f * (float)rth, pbot = (1.0f - ly) * 0.5f * (float)rth;
+                box_note(&d, count, plo, phi, ptop, pbot);
+                camera = camera_placed(&d, count) && !on_box(plo, phi, ptop, pbot);
+            }
+            if (squeeze.k != 1.0f && camera) {   /* about the point it was placed by (clip x) */
                 text_rows t;
                 t.n = 0;
                 for (uint32_t i = 0; i < count; i++)
